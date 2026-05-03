@@ -91,22 +91,26 @@ export default function App() {
       recognition.lang = language;
 
       recognition.onresult = (event: any) => {
-        let fullFinalTranscript = '';
+        let accumulatedFinal = '';
         let interimTranscript = '';
 
         for (let i = 0; i < event.results.length; ++i) {
+          const transcript = event.results[i][0].transcript;
           if (event.results[i].isFinal) {
-            fullFinalTranscript += event.results[i][0].transcript;
+            const current = transcript.trim();
+            // Smart Merge: If this final result starts with the previous one, it's cumulative
+            if (accumulatedFinal && current.toLowerCase().startsWith(accumulatedFinal.toLowerCase().trim())) {
+              accumulatedFinal = current;
+            } else {
+              accumulatedFinal += (accumulatedFinal ? ' ' : '') + current;
+            }
           } else {
-            interimTranscript += event.results[i][0].transcript;
+            interimTranscript += transcript;
           }
         }
         
-        // We update the raw text by combining any manual text (if we wanted to track it)
-        // For simplicity and to fix the replication bug, we sync rawText with the full final transcript
-        // during an active recording session.
-        if (fullFinalTranscript) {
-          setRawText(fullFinalTranscript);
+        if (accumulatedFinal) {
+          setRawText(accumulatedFinal);
         }
         setInterimText(interimTranscript);
       };
