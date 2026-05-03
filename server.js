@@ -33,14 +33,19 @@ app.post('/api/refine', async (req, res) => {
   }
 
   try {
-    const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+    // Specify v1 version explicitly to avoid 404s from v1beta
+    const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' }, { apiVersion: 'v1' });
     const result = await model.generateContent(prompt);
     const response = await result.response;
     const text = response.text();
     res.json({ text });
   } catch (error) {
-    console.error('Gemini API Error:', error);
-    res.status(500).json({ error: error.message || 'Failed to refine text' });
+    console.error('Detailed Gemini API Error:', error);
+    // Log the full error to help debugging
+    res.status(500).json({ 
+      error: error.message || 'Failed to refine text',
+      details: error.stack
+    });
   }
 });
 
