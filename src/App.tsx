@@ -1,10 +1,13 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { GoogleGenAI } from '@google/genai';
-import { Mic, MicOff, RefreshCw, Copy, Check, Sparkles, ArrowRightLeft, Clock } from 'lucide-react';
+import { Mic, MicOff, RefreshCw, Copy, Check, Sparkles, ArrowRightLeft, Clock, HelpCircle } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import { IOSInstallPrompt } from './components/IOSInstallPrompt';
+import { AppWalkthrough } from './components/AppWalkthrough';
 
 // Initialize Gemini via the official SDK
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
+const ai = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
 
 // Setup SpeechRecognition interface
 const SpeechRecognitionAPI = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
@@ -59,6 +62,15 @@ export default function App() {
 
   const [history, setHistory] = useState<HistoryItem[]>([]);
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
+  const [isWalkthroughOpen, setIsWalkthroughOpen] = useState(false);
+
+  useEffect(() => {
+    const hasSeenWalkthrough = localStorage.getItem('fluent_scribe_walkthrough_seen');
+    if (!hasSeenWalkthrough) {
+      setIsWalkthroughOpen(true);
+      localStorage.setItem('fluent_scribe_walkthrough_seen', 'true');
+    }
+  }, []);
 
   useEffect(() => {
     const saved = localStorage.getItem('fluent_scribe_history');
@@ -79,20 +91,22 @@ export default function App() {
       recognition.lang = language;
 
       recognition.onresult = (event: any) => {
-        let finalTranscript = '';
+        let fullFinalTranscript = '';
         let interimTranscript = '';
 
-        for (let i = event.resultIndex; i < event.results.length; ++i) {
+        for (let i = 0; i < event.results.length; ++i) {
           if (event.results[i].isFinal) {
-            finalTranscript += event.results[i][0].transcript;
+            fullFinalTranscript += event.results[i][0].transcript;
           } else {
             interimTranscript += event.results[i][0].transcript;
           }
         }
         
-        // Append final parts to the textarea natively
-        if (finalTranscript) {
-          setRawText((prev) => prev + (prev.length > 0 && !prev.endsWith(' ') && !finalTranscript.startsWith(' ') ? ' ' : '') + finalTranscript);
+        // We update the raw text by combining any manual text (if we wanted to track it)
+        // For simplicity and to fix the replication bug, we sync rawText with the full final transcript
+        // during an active recording session.
+        if (fullFinalTranscript) {
+          setRawText(fullFinalTranscript);
         }
         setInterimText(interimTranscript);
       };
@@ -186,6 +200,11 @@ export default function App() {
   const refineText = async () => {
     if (!rawText.trim()) return;
     
+    if (!GEMINI_API_KEY || GEMINI_API_KEY === 'undefined') {
+      setError('Gemini API Key is missing. Please add it to your .env file or environment variables.');
+      return;
+    }
+
     setIsRefining(true);
     setError(null);
     
@@ -295,7 +314,14 @@ ${rawText}
             </button>
           </div>
         </div>
-        <div className="flex items-center justify-end max-w-[30%]">
+        <div className="flex items-center justify-end max-w-[30%] gap-2">
+          <button 
+            onClick={() => setIsWalkthroughOpen(true)} 
+            className="w-8 h-8 bg-white rounded-full flex items-center justify-center border border-[#E5E2DA] text-[#A5A296] hover:text-[#5A5A40] transition-colors"
+            title="How to use"
+          >
+            <HelpCircle className="w-4 h-4" />
+          </button>
           <button 
             onClick={() => setIsHistoryOpen(true)} 
             className="w-8 h-8 bg-white rounded-full flex items-center justify-center border border-[#E5E2DA] text-[#A5A296] hover:text-[#5A5A40] transition-colors relative"
@@ -613,6 +639,9 @@ ${rawText}
           </motion.div>
         )}
       </AnimatePresence>
+
+      <IOSInstallPrompt />
+      <AppWalkthrough isOpen={isWalkthroughOpen} onClose={() => setIsWalkthroughOpen(false)} />
     </div>
   );
 }
