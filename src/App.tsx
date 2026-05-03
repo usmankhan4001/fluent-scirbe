@@ -1,14 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { GoogleGenAI } from '@google/genai';
 import { Mic, MicOff, RefreshCw, Copy, Check, Sparkles, ArrowRightLeft, Clock, HelpCircle } from 'lucide-react';
-import { motion, AnimatePresence } from 'motion/react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { IOSInstallPrompt } from './components/IOSInstallPrompt';
 import { AppWalkthrough } from './components/AppWalkthrough';
 
-// Initialize Gemini via the official SDK
 const VITE_GEMINI_API_KEY = import.meta.env.VITE_GEMINI_API_KEY || '';
-const genAI = new GoogleGenAI(VITE_GEMINI_API_KEY);
-const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
 
 // Setup SpeechRecognition interface
 const SpeechRecognitionAPI = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
@@ -87,8 +84,6 @@ export default function App() {
   useEffect(() => {
     if (SpeechRecognitionAPI) {
       const recognition = new SpeechRecognitionAPI();
-      // WE DISABLE CONTINUOUS MODE TO FIX THE ANDROID DUPLICATION BUG
-      // Instead, we manually restart in onend to achieve a continuous-like experience.
       recognition.continuous = false; 
       recognition.interimResults = true;
       recognition.lang = language;
@@ -109,7 +104,6 @@ export default function App() {
           setRawText(prev => {
             const trimmedPrev = prev.trim();
             const trimmedFinal = finalTranscript.trim();
-            // Final check to prevent double-appending if onresult fires twice for same data
             if (trimmedPrev.endsWith(trimmedFinal)) return prev;
             return prev + (prev && !prev.endsWith(' ') ? ' ' : '') + finalTranscript;
           });
@@ -129,7 +123,6 @@ export default function App() {
       };
 
       recognition.onend = () => {
-        // Automatically restart if we are still in "recording" mode
         if (isRecordingRef.current) {
             try {
                recognition.start();
@@ -149,10 +142,8 @@ export default function App() {
         recognitionRef.current.stop();
       }
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [language]);
 
-  // If language changes while recording, we restart
   useEffect(() => {
     if (isRecording && recognitionRef.current) {
        recognitionRef.current.stop();
@@ -161,7 +152,6 @@ export default function App() {
          try { recognitionRef.current.start(); } catch (e) {}
        }, 100);
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [language]);
 
   const toggleRecording = () => {
@@ -213,10 +203,12 @@ export default function App() {
     setError(null);
     
     try {
+      const genAI = new GoogleGenAI(VITE_GEMINI_API_KEY);
+      const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+      
       const selectedLang = LANGUAGES.find(l => l.code === language)?.label || 'the specified language';
       const targetLang = mode === 'translate' ? (LANGUAGES.find(l => l.code === outputLanguage)?.label || selectedLang) : selectedLang;
       const isTranslation = mode === 'translate' && language !== outputLanguage;
-      const selectedFormatInfo = FORMATS.find(f => f.id === format);
       
       let formatInstruction = "";
       switch (format) {
