@@ -83,7 +83,7 @@ export default function App() {
   useEffect(() => {
     if (SpeechRecognitionAPI) {
       const recognition = new SpeechRecognitionAPI();
-      recognition.continuous = false; 
+      recognition.continuous = true; 
       recognition.interimResults = true;
       recognition.lang = language;
 
@@ -116,17 +116,25 @@ export default function App() {
            setError('Microphone permission denied. Please allow microphone access.');
            setRecordingState(false);
         } else if (event.error === 'network') {
-           setError('Network error in speech recognition. Please check your connection.');
-           setRecordingState(false);
+           // Network errors can be transient, try to ignore or show a subtle hint
+           console.warn('Network error, will attempt to recover...');
         }
       };
 
       recognition.onend = () => {
+        // If we are still supposed to be recording, restart it.
+        // This handles cases where the browser stops recognition due to silence or time limits.
         if (isRecordingRef.current) {
             try {
                recognition.start();
             } catch (e) {
-               console.error('Failed to auto-restart:', e);
+               console.error('Failed to auto-restart recognition:', e);
+               // Try again after a short delay if it failed (e.g. still stopping)
+               setTimeout(() => {
+                 if (isRecordingRef.current) {
+                   try { recognition.start(); } catch (err) {}
+                 }
+               }, 1000);
             }
         }
       };
