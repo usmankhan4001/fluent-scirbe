@@ -13,8 +13,8 @@ RUN npm install
 COPY . .
 
 # Pass build-time environment variables
-ARG GEMINI_API_KEY
-ENV GEMINI_API_KEY=$GEMINI_API_KEY
+ARG VITE_GEMINI_API_KEY
+ENV VITE_GEMINI_API_KEY=$VITE_GEMINI_API_KEY
 
 # Build the app
 RUN npm run build
