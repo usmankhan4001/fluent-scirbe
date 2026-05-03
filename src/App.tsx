@@ -1,11 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { GoogleGenAI } from '@google/genai';
 import { Mic, MicOff, RefreshCw, Copy, Check, Sparkles, ArrowRightLeft, Clock, HelpCircle } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { IOSInstallPrompt } from './components/IOSInstallPrompt';
 import { AppWalkthrough } from './components/AppWalkthrough';
 
-const VITE_GEMINI_API_KEY = import.meta.env.VITE_GEMINI_API_KEY || '';
+
 
 // Setup SpeechRecognition interface
 const SpeechRecognitionAPI = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
@@ -194,18 +193,10 @@ export default function App() {
   const refineText = async () => {
     if (!rawText.trim()) return;
     
-    if (!VITE_GEMINI_API_KEY || VITE_GEMINI_API_KEY === 'undefined') {
-      setError('Gemini API Key is missing. Please add VITE_GEMINI_API_KEY to your .env file.');
-      return;
-    }
-
     setIsRefining(true);
     setError(null);
     
     try {
-      const genAI = new GoogleGenAI(VITE_GEMINI_API_KEY);
-      const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
-      
       const selectedLang = LANGUAGES.find(l => l.code === language)?.label || 'the specified language';
       const targetLang = mode === 'translate' ? (LANGUAGES.find(l => l.code === outputLanguage)?.label || selectedLang) : selectedLang;
       const isTranslation = mode === 'translate' && language !== outputLanguage;
@@ -246,9 +237,21 @@ Raw Transcript:
 ${rawText}
 """`;
 
-      const result = await model.generateContent(prompt);
-      const response = await result.response;
-      const newRefined = response.text()?.trim() || '';
+      const response = await fetch('/api/refine', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ prompt }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to refine text');
+      }
+
+      const data = await response.json();
+      const newRefined = data.text?.trim() || '';
       setRefinedText(newRefined);
       
       if (newRefined) {
@@ -270,8 +273,7 @@ ${rawText}
       }
     } catch (err: any) {
       console.error('Refinement error:', err);
-      const errorMessage = err?.message || err?.toString() || '';
-      setError(`API Error: ${errorMessage.includes('API key') ? 'Invalid API Key' : errorMessage || 'An error occurred while refining the text.'}`);
+      setError(err?.message || 'An error occurred while refining the text.');
     } finally {
       setIsRefining(false);
     }

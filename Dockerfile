@@ -12,22 +12,28 @@ RUN npm install
 # Copy project files
 COPY . .
 
-# Pass build-time environment variables
-ARG VITE_GEMINI_API_KEY
-ENV VITE_GEMINI_API_KEY=$VITE_GEMINI_API_KEY
-
-# Build the app
+# Build the frontend
 RUN npm run build
 
 # Production stage
-FROM nginx:stable-alpine
+FROM node:20-alpine
 
-# Copy built files from build stage
-COPY --from=build /app/dist /usr/share/nginx/html
+WORKDIR /app
 
-# Copy nginx config for SPA routing (optional but recommended)
-COPY nginx.conf /etc/nginx/conf.d/default.conf
+# Copy package files and install production dependencies
+COPY package*.json ./
+RUN npm install --production
+
+# Copy the built frontend from the build stage
+COPY --from=build /app/dist ./dist
+
+# Copy the backend server
+COPY server.js ./
+
+# Set environment variables (GEMINI_API_KEY should be provided at runtime)
+ENV PORT=80
+ENV NODE_ENV=production
 
 EXPOSE 80
 
-CMD ["nginx", "-g", "daemon off;"]
+CMD ["node", "server.js"]
