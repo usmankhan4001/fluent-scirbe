@@ -7,7 +7,8 @@ import { AppWalkthrough } from './components/AppWalkthrough';
 
 // Initialize Gemini via the official SDK
 const VITE_GEMINI_API_KEY = import.meta.env.VITE_GEMINI_API_KEY || '';
-const ai = new GoogleGenAI({ apiKey: VITE_GEMINI_API_KEY });
+const genAI = new GoogleGenAI(VITE_GEMINI_API_KEY);
+const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
 
 // Setup SpeechRecognition interface
 const SpeechRecognitionAPI = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
@@ -253,12 +254,9 @@ Raw Transcript:
 ${rawText}
 """`;
 
-      const response = await ai.models.generateContent({
-        model: 'gemini-1.5-flash',
-        contents: prompt,
-      });
-
-      const newRefined = response.text?.trim() || '';
+      const result = await model.generateContent(prompt);
+      const response = await result.response;
+      const newRefined = response.text()?.trim() || '';
       setRefinedText(newRefined);
       
       if (newRefined) {
