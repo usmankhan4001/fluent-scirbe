@@ -6,8 +6,8 @@ import { IOSInstallPrompt } from './components/IOSInstallPrompt';
 import { AppWalkthrough } from './components/AppWalkthrough';
 
 // Initialize Gemini via the official SDK
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
-const ai = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
+const VITE_GEMINI_API_KEY = import.meta.env.VITE_GEMINI_API_KEY || '';
+const ai = new GoogleGenAI({ apiKey: VITE_GEMINI_API_KEY });
 
 // Setup SpeechRecognition interface
 const SpeechRecognitionAPI = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
@@ -86,62 +86,61 @@ export default function App() {
   useEffect(() => {
     if (SpeechRecognitionAPI) {
       const recognition = new SpeechRecognitionAPI();
-      recognition.continuous = true;
+      // WE DISABLE CONTINUOUS MODE TO FIX THE ANDROID DUPLICATION BUG
+      // Instead, we manually restart in onend to achieve a continuous-like experience.
+      recognition.continuous = false; 
       recognition.interimResults = true;
       recognition.lang = language;
 
       recognition.onresult = (event: any) => {
-        let accumulatedFinal = '';
         let interimTranscript = '';
+        let finalTranscript = '';
 
-        for (let i = 0; i < event.results.length; ++i) {
-          const transcript = event.results[i][0].transcript;
+        for (let i = event.resultIndex; i < event.results.length; ++i) {
           if (event.results[i].isFinal) {
-            const current = transcript.trim();
-            // Smart Merge: If this final result starts with the previous one, it's cumulative
-            if (accumulatedFinal && current.toLowerCase().startsWith(accumulatedFinal.toLowerCase().trim())) {
-              accumulatedFinal = current;
-            } else {
-              accumulatedFinal += (accumulatedFinal ? ' ' : '') + current;
-            }
+            finalTranscript += event.results[i][0].transcript;
           } else {
-            interimTranscript += transcript;
+            interimTranscript += event.results[i][0].transcript;
           }
         }
         
-        if (accumulatedFinal) {
-          setRawText(accumulatedFinal);
+        if (finalTranscript) {
+          setRawText(prev => {
+            const trimmedPrev = prev.trim();
+            const trimmedFinal = finalTranscript.trim();
+            // Final check to prevent double-appending if onresult fires twice for same data
+            if (trimmedPrev.endsWith(trimmedFinal)) return prev;
+            return prev + (prev && !prev.endsWith(' ') ? ' ' : '') + finalTranscript;
+          });
         }
         setInterimText(interimTranscript);
       };
 
       recognition.onerror = (event: any) => {
+        console.error('Recognition error:', event.error);
         if (event.error === 'not-allowed') {
            setError('Microphone permission denied. Please allow microphone access.');
            setRecordingState(false);
         } else if (event.error === 'network') {
-           setError('Speech recognition service unavailable (network limit). Please type manually.');
+           setError('Network error in speech recognition. Please check your connection.');
            setRecordingState(false);
-        } else if (event.error !== 'no-speech') {
-           console.error('Speech recognition error:', event.error);
         }
       };
 
       recognition.onend = () => {
-        // If it ended automatically but we are still recording, try to restart (handles long pauses)
+        // Automatically restart if we are still in "recording" mode
         if (isRecordingRef.current) {
             try {
                recognition.start();
             } catch (e) {
-               console.error('Failed to restart recognition', e);
-               setRecordingState(false);
+               console.error('Failed to auto-restart:', e);
             }
         }
       };
 
       recognitionRef.current = recognition;
     } else {
-      setError('Speech recognition is not supported in this browser. You can still type manually!');
+      setError('Speech recognition is not supported in this browser.');
     }
     
     return () => {
@@ -204,8 +203,8 @@ export default function App() {
   const refineText = async () => {
     if (!rawText.trim()) return;
     
-    if (!GEMINI_API_KEY || GEMINI_API_KEY === 'undefined') {
-      setError('Gemini API Key is missing. Please add it to your .env file or environment variables.');
+    if (!VITE_GEMINI_API_KEY || VITE_GEMINI_API_KEY === 'undefined') {
+      setError('Gemini API Key is missing. Please add VITE_GEMINI_API_KEY to your .env file.');
       return;
     }
 
