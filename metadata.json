@@ -1,0 +1,6 @@
+{
+  "name": "Fluent Scribe",
+  "description": "An AI-powered voice transcription and text refinement app supporting English, Urdu, and Arabic. It cleans up grammar and punctuation for emails, messages, and prompts.",
+  "requestFramePermissions": ["microphone"],
+  "majorCapabilities": []
+}
