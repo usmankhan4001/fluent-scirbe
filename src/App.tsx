@@ -254,7 +254,7 @@ ${rawText}
 """`;
 
       const response = await ai.models.generateContent({
-        model: 'gemini-2.5-flash',
+        model: 'gemini-1.5-flash',
         contents: prompt,
       });
 
@@ -278,9 +278,10 @@ ${rawText}
           return updated;
         });
       }
-    } catch (err) {
-      console.error(err);
-      setError('An error occurred while refining the text. Please check your API key or try again.');
+    } catch (err: any) {
+      console.error('Refinement error:', err);
+      const errorMessage = err?.message || err?.toString() || '';
+      setError(`API Error: ${errorMessage.includes('API key') ? 'Invalid API Key' : errorMessage || 'An error occurred while refining the text.'}`);
     } finally {
       setIsRefining(false);
     }
