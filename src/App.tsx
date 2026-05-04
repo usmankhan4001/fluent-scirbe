@@ -170,7 +170,7 @@ export default function App() {
     }
   }, [language]);
 
-  const toggleRecording = () => {
+  const toggleRecording = async () => {
     if (!recognitionRef.current) return;
     
     setError(null);
@@ -182,11 +182,26 @@ export default function App() {
       setRawText('');
       setInterimText('');
       setRefinedText('');
+
+      try {
+        // Explicitly request mic access first to force Safari/iOS to show the permission prompt.
+        // webkitSpeechRecognition often fails silently to ask for permissions on iOS.
+        if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+           const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+           // Immediately stop the raw stream tracks so we don't hold the mic twice
+           stream.getTracks().forEach(track => track.stop());
+        }
+      } catch (err) {
+        setError('Microphone permission denied. Please allow microphone access in your iOS/Browser settings.');
+        console.error('getUserMedia error:', err);
+        return;
+      }
+
       setRecordingState(true);
       try {
         recognitionRef.current.start();
       } catch (err) {
-        console.error(err);
+        console.error('Speech start error:', err);
         setRecordingState(false);
       }
     }
