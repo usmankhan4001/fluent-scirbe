@@ -1,15 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Mic, MicOff, RefreshCw, Copy, Check, Sparkles, ArrowRightLeft, Clock, HelpCircle } from 'lucide-react';
+import { Mic, MicOff, Copy, Check, Sparkles, Clock, Info, X, ChevronRight, Edit3 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { IOSInstallPrompt } from './components/IOSInstallPrompt';
-import { AppWalkthrough } from './components/AppWalkthrough';
-
-
 
 // Setup SpeechRecognition interface
 const SpeechRecognitionAPI = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
 
-// Helper to detect iOS (including iPads on iOS 13+)
 const isIOS = typeof window !== 'undefined' && 
   (/iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1));
 
@@ -17,248 +12,144 @@ interface HistoryItem {
   id: string;
   rawText: string;
   refinedText: string;
-  mode: 'transcribe' | 'translate';
-  language: string;
-  outputLanguage?: string;
-  format?: string;
+  mode: string;
   timestamp: number;
 }
 
-const LANGUAGES = [
-  { code: 'en-US', label: 'English' },
-  { code: 'ur-PK', label: 'Urdu (اردو)' },
-  { code: 'ar-SA', label: 'Arabic (العربية)' }
-];
-
-const FORMATS = [
-  { id: 'smart', label: 'Smart Auto-Format', desc: 'Understands intent and structures output automatically.' },
-  { id: 'standard', label: 'Standard text', desc: 'Grammar and punctuation fixes only.' },
-  { id: 'email', label: 'Professional Email', desc: 'Formats as a professional email.' },
-  { id: 'whatsapp', label: 'WhatsApp Message', desc: 'Casual but clear text.' },
-  { id: 'prompt', label: 'AI Prompt', desc: 'Optimizes text as an instruction for AI.' }
+const MODES = [
+  { id: 'professional', label: 'Professional Writing', icon: '💼' },
+  { id: 'email', label: 'Email Format', icon: '✉️' },
+  { id: 'technical', label: 'Technical Writing', icon: '🔧' },
+  { id: 'coding', label: 'Coding Prompt', icon: '💻' },
+  { id: 'ai_prompt', label: 'AI Prompt', icon: '🤖' },
+  { id: 'casual', label: 'Casual Chat', icon: '💬' },
+  { id: 'diary', label: 'Journal', icon: '📔' },
 ];
 
 export default function App() {
+  const [showSplash, setShowSplash] = useState(true);
   const [isRecording, setIsRecording] = useState(false);
   const isRecordingRef = useRef(false);
-  
-  const setRecordingState = (state: boolean) => {
-    setIsRecording(state);
-    isRecordingRef.current = state;
-  };
 
-  const [language, setLanguage] = useState(LANGUAGES[0].code);
-  const [outputLanguage, setOutputLanguage] = useState(LANGUAGES[1]?.code || LANGUAGES[0].code);
-  const [format, setFormat] = useState(FORMATS[0].id);
-  const [mode, setMode] = useState<'transcribe' | 'translate'>('transcribe');
-  
   const [rawText, setRawText] = useState('');
   const [interimText, setInterimText] = useState('');
   const [refinedText, setRefinedText] = useState('');
   const [isRefining, setIsRefining] = useState(false);
-  
-  const [copiedRaw, setCopiedRaw] = useState(false);
-  const [copiedRefined, setCopiedRefined] = useState(false);
+  const [selectedMode, setSelectedMode] = useState(MODES[0].id);
+
+  const [copied, setCopied] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const [history, setHistory] = useState<HistoryItem[]>([]);
-  const [isHistoryOpen, setIsHistoryOpen] = useState(false);
-  const [isWalkthroughOpen, setIsWalkthroughOpen] = useState(false);
-
-  useEffect(() => {
-    const hasSeenWalkthrough = localStorage.getItem('fluent_scribe_walkthrough_seen');
-    if (!hasSeenWalkthrough) {
-      setIsWalkthroughOpen(true);
-      localStorage.setItem('fluent_scribe_walkthrough_seen', 'true');
-    }
-  }, []);
-
-  useEffect(() => {
-    const saved = localStorage.getItem('fluent_scribe_history');
-    if (saved) {
-      try {
-        setHistory(JSON.parse(saved));
-      } catch(e) {}
-    }
-  }, []);
+  const [showHistory, setShowHistory] = useState(false);
+  const [showAbout, setShowAbout] = useState(false);
 
   const recognitionRef = useRef<any>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    // Splash screen timer
+    const timer = setTimeout(() => {
+      setShowSplash(false);
+    }, 2000);
+    return () => clearTimeout(timer);
+  }, []);
+
+  useEffect(() => {
+    const saved = localStorage.getItem('easytext_history');
+    if (saved) {
+      try { setHistory(JSON.parse(saved)); } catch (e) {}
+    }
+  }, []);
 
   useEffect(() => {
     if (SpeechRecognitionAPI) {
       const recognition = new SpeechRecognitionAPI();
-      // Use continuous=false everywhere to prevent Android repeating bugs and iOS silent crashes
       recognition.continuous = false; 
       recognition.interimResults = true;
-      recognition.lang = language;
+      recognition.lang = 'en-US';
 
       recognition.onresult = (event: any) => {
-        let interimTranscript = '';
-        let finalTranscript = '';
-
+        let interim = '';
+        let final = '';
         for (let i = event.resultIndex; i < event.results.length; ++i) {
-          if (event.results[i].isFinal) {
-            finalTranscript += event.results[i][0].transcript;
-          } else {
-            interimTranscript += event.results[i][0].transcript;
-          }
+          if (event.results[i].isFinal) final += event.results[i][0].transcript;
+          else interim += event.results[i][0].transcript;
         }
-        
-        if (finalTranscript) {
-          setRawText(prev => {
-            return prev + (prev && !prev.endsWith(' ') ? ' ' : '') + finalTranscript.trim();
-          });
+        if (final) {
+          setRawText(prev => prev + (prev && !prev.endsWith(' ') ? ' ' : '') + final.trim());
         }
-        setInterimText(interimTranscript);
+        setInterimText(interim);
       };
 
       recognition.onerror = (event: any) => {
         console.error('Recognition error:', event.error);
         if (event.error === 'not-allowed') {
-           setError('Microphone permission denied. Please allow microphone access.');
+           setError('Microphone permission denied.');
            setRecordingState(false);
-        } else if (event.error === 'network') {
-           // Network errors can be transient, try to ignore or show a subtle hint
-           console.warn('Network error, will attempt to recover...');
         }
       };
 
       recognition.onend = () => {
-        // If we are still supposed to be recording, restart it.
         if (isRecordingRef.current) {
-            try {
-               recognition.start();
-            } catch (e) {
-               console.error('Failed to auto-restart recognition:', e);
-               // Try again after a short delay
+            try { recognition.start(); } 
+            catch (e) {
                setTimeout(() => {
                  if (isRecordingRef.current) {
-                   try { 
-                     recognition.start(); 
-                   } catch (err) {
-                     // On iOS, auto-restarting is blocked without a physical tap.
-                     // We MUST turn the UI button off so the user knows the mic died and they need to tap it again!
-                     setRecordingState(false);
-                   }
+                   try { recognition.start(); } 
+                   catch (err) { setRecordingState(false); }
                  }
                }, 1000);
             }
         }
       };
-
       recognitionRef.current = recognition;
     } else {
       setError('Speech recognition is not supported in this browser.');
     }
-    
     return () => {
-      if (recognitionRef.current) {
-        recognitionRef.current.stop();
-      }
+      if (recognitionRef.current) recognitionRef.current.stop();
     };
-  }, [language]);
+  }, []);
 
-  useEffect(() => {
-    if (isRecording && recognitionRef.current) {
-       recognitionRef.current.stop();
-       recognitionRef.current.lang = language;
-       setTimeout(() => {
-         try { recognitionRef.current.start(); } catch (e) {}
-       }, 100);
-    }
-  }, [language]);
+  const setRecordingState = (state: boolean) => {
+    setIsRecording(state);
+    isRecordingRef.current = state;
+  };
 
   const toggleRecording = () => {
     if (!recognitionRef.current) return;
-    
     setError(null);
     if (isRecording) {
       recognitionRef.current.stop();
       setRecordingState(false);
       setInterimText('');
     } else {
-      setRawText('');
-      setInterimText('');
-      setRefinedText('');
       setRecordingState(true);
-      
-      try {
-        recognitionRef.current.start();
-      } catch (err) {
-        console.error('Speech start error:', err);
-        setRecordingState(false);
-      }
+      try { recognitionRef.current.start(); } 
+      catch (err) { setRecordingState(false); }
     }
   };
 
-  const copyToClipboard = async (text: string, isRaw: boolean) => {
+  const copyToClipboard = async (text: string) => {
     try {
       await navigator.clipboard.writeText(text);
-      if (isRaw) {
-        setCopiedRaw(true);
-        setTimeout(() => setCopiedRaw(false), 2000);
-      } else {
-        setCopiedRefined(true);
-        setTimeout(() => setCopiedRefined(false), 2000);
-      }
-    } catch (e) {
-      console.error('Failed to copy', e);
-    }
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (e) {}
   };
 
   const refineText = async () => {
     if (!rawText.trim()) return;
-    
     setIsRefining(true);
     setError(null);
-    
+    setRefinedText('');
+
     try {
-      const selectedLang = LANGUAGES.find(l => l.code === language)?.label || 'the specified language';
-      const targetLang = mode === 'translate' ? (LANGUAGES.find(l => l.code === outputLanguage)?.label || selectedLang) : selectedLang;
-      const isTranslation = mode === 'translate' && language !== outputLanguage;
-      
-      let formatInstruction = "";
-      switch (format) {
-        case 'smart':
-          formatInstruction = "Analyze the transcript to determine the speaker's core intent. If the text resembles an email, letter, or message, format it appropriately. If there are lists or distinct points, structure them using bullet points (using - or •). Use ALL CAPS for section headings where it makes sense to create a formalized, highly legible structured layout. Provide a smart, finalized structure rather than a raw transcription.";
-          break;
-        case 'email':
-          formatInstruction = "Format the text as a professional email. Add placeholders for greetings/sign-offs if appropriate.";
-          break;
-        case 'whatsapp':
-          formatInstruction = "Format the text as a clear, polite, and well-spaced WhatsApp message.";
-          break;
-        case 'prompt':
-          formatInstruction = "Format and structure the text as a high-quality instructional prompt for an AI.";
-          break;
-        case 'standard':
-        default:
-          formatInstruction = "Ensure perfect grammar, spelling, and punctuation without changing the core meaning.";
-          break;
-      }
-
-      const prompt = `You are an expert text editor and translator. I am giving you a raw speech-to-text transcript spoken primarily in ${selectedLang}.
-      
-Your task:
-1. ${isTranslation ? `Translate the meaning accurately and naturally into ${targetLang}.` : `Fix any grammatical, spelling, and punctuation errors.`}
-2. ${formatInstruction}
-
-Constraints:
-- Respond ONLY with the finalized, refined text.
-- Do not add any conversational filler like "Here is the parsed text."
-- Language constraints: The final text MUST be in ${targetLang}. For translations, ensure local idioms map naturally.
-
-Raw Transcript:
-"""
-${rawText}
-"""`;
-
       const response = await fetch('/api/refine', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ prompt }),
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt: rawText, mode: selectedMode }),
       });
 
       if (!response.ok) {
@@ -275,385 +166,357 @@ ${rawText}
           id: Date.now().toString(),
           rawText,
           refinedText: newRefined,
-          mode,
-          language,
-          outputLanguage: mode === 'translate' ? outputLanguage : undefined,
-          format: mode === 'transcribe' ? format : undefined,
+          mode: selectedMode,
           timestamp: Date.now()
         };
         setHistory(prev => {
           const updated = [newItem, ...prev].slice(0, 50);
-          localStorage.setItem('fluent_scribe_history', JSON.stringify(updated));
+          localStorage.setItem('easytext_history', JSON.stringify(updated));
           return updated;
         });
       }
     } catch (err: any) {
-      console.error('Refinement error:', err);
-      setError(err?.message || 'An error occurred while refining the text.');
+      setError(err?.message || 'Error refining text.');
     } finally {
       setIsRefining(false);
     }
   };
 
+  if (showSplash) {
+    return (
+      <div className="h-[100dvh] w-full flex flex-col items-center justify-center bg-gradient-to-br from-[#0F172A] to-[#1E293B] text-white relative overflow-hidden">
+        <motion.div 
+          initial={{ opacity: 0, scale: 0.9 }}
+          animate={{ opacity: 1, scale: 1 }}
+          transition={{ duration: 0.8, ease: "easeOut" }}
+          className="flex flex-col items-center z-10"
+        >
+          <div className="w-16 h-16 bg-gradient-to-tr from-blue-500 to-cyan-400 rounded-2xl flex items-center justify-center shadow-xl shadow-blue-500/20 mb-6">
+            <Sparkles className="w-8 h-8 text-white" />
+          </div>
+          <h1 className="text-4xl font-bold tracking-tight mb-3">EasyText</h1>
+          <motion.p 
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.5, duration: 0.5 }}
+            className="text-blue-200/80 font-medium tracking-wide text-sm uppercase"
+          >
+            Turn thoughts into perfect text instantly
+          </motion.p>
+        </motion.div>
+        
+        {/* Abstract background waves */}
+        <motion.div 
+          animate={{ 
+            rotate: [0, 5, -5, 0],
+            scale: [1, 1.05, 1],
+          }}
+          transition={{ repeat: Infinity, duration: 10, ease: "linear" }}
+          className="absolute top-1/4 left-1/4 w-96 h-96 bg-blue-500/10 rounded-full blur-3xl pointer-events-none"
+        />
+        <div className="absolute bottom-6 text-[10px] text-white/30 uppercase tracking-widest font-bold">
+          Powered by Takweyat
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className="h-[100dvh] mx-auto w-full max-w-md bg-[#FDFBF7] text-[#3D3D3D] font-sans relative flex flex-col sm:border-x sm:border-[#E5E2DA] sm:shadow-2xl overflow-hidden">
+    <div className="h-[100dvh] mx-auto w-full max-w-md bg-[#0F172A] text-white font-sans relative flex flex-col sm:shadow-2xl overflow-hidden">
       
       {/* Header */}
-      <header className="flex-none px-5 py-3 bg-[#FDFBF7] border-b border-[#E5E2DA] flex flex-row items-center justify-between z-10 shrink-0 relative">
-        <div className="flex items-center justify-start max-w-[30%]">
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 bg-[#5A5A40] rounded-lg flex items-center justify-center shadow-sm">
-              <Sparkles className="w-4 h-4 text-white" />
-            </div>
-            <h1 className="text-xl font-semibold tracking-tight font-serif italic text-[#2D2D2D] md:block hidden">
-              Fluent
-            </h1>
+      <header className="flex-none px-6 py-4 flex items-center justify-between z-10 shrink-0">
+        <div className="flex items-center gap-3">
+          <div className="w-8 h-8 bg-gradient-to-tr from-blue-500 to-cyan-400 rounded-xl flex items-center justify-center shadow-lg shadow-blue-500/20">
+            <Sparkles className="w-4 h-4 text-white" />
           </div>
+          <h1 className="text-lg font-bold tracking-tight">EasyText</h1>
         </div>
-        <div className="flex justify-center shrink-0 absolute left-1/2 -translate-x-1/2">
-          <div className="flex bg-[#E8E6DF] p-1 rounded-full w-[180px]">
-            <button 
-              onClick={() => setMode('transcribe')} 
-              className={`flex-1 text-[10px] uppercase tracking-widest font-bold py-1.5 rounded-full transition-all ${mode === 'transcribe' ? 'bg-white shadow-sm text-[#5A5A40]' : 'text-[#A5A296] hover:text-[#5A5A40]'}`}
-            >
-              Scribe
-            </button>
-            <button 
-              onClick={() => setMode('translate')} 
-              className={`flex-1 text-[10px] uppercase tracking-widest font-bold py-1.5 rounded-full transition-all ${mode === 'translate' ? 'bg-white shadow-sm text-[#5A5A40]' : 'text-[#A5A296] hover:text-[#5A5A40]'}`}
-            >
-              Translate
-            </button>
-          </div>
-        </div>
-        <div className="flex items-center justify-end max-w-[30%] gap-2">
+        <div className="flex items-center gap-3">
           <button 
-            onClick={() => setIsWalkthroughOpen(true)} 
-            className="w-8 h-8 bg-white rounded-full flex items-center justify-center border border-[#E5E2DA] text-[#A5A296] hover:text-[#5A5A40] transition-colors"
-            title="How to use"
+            onClick={() => setShowHistory(true)} 
+            className="w-10 h-10 rounded-full bg-white/5 flex items-center justify-center text-white/70 hover:text-white hover:bg-white/10 transition-colors relative"
           >
-            <HelpCircle className="w-4 h-4" />
+            <Clock className="w-5 h-5" />
           </button>
           <button 
-            onClick={() => setIsHistoryOpen(true)} 
-            className="w-8 h-8 bg-white rounded-full flex items-center justify-center border border-[#E5E2DA] text-[#A5A296] hover:text-[#5A5A40] transition-colors relative"
+            onClick={() => setShowAbout(true)} 
+            className="w-10 h-10 rounded-full bg-white/5 flex items-center justify-center text-white/70 hover:text-white hover:bg-white/10 transition-colors"
           >
-            <Clock className="w-4 h-4" />
-            {history.length > 0 && (
-              <span className="absolute max-w-[20px] -top-1 -right-1 bg-[#5A5A40] text-white text-[8px] font-bold w-3 h-3 rounded-full flex items-center justify-center">
-                {history.length}
-              </span>
-            )}
+            <Info className="w-5 h-5" />
           </button>
         </div>
       </header>
 
       {error && (
-        <div className="m-4 p-4 bg-red-50 text-red-700 border border-red-200 rounded-xl text-sm font-medium z-10 shadow-sm relative">
-          <button 
-            onClick={() => setError(null)} 
-            className="absolute top-2.5 right-2.5 text-red-500 hover:text-red-700 bg-red-100 hover:bg-red-200 rounded-full p-1"
-          >
-            <div className="w-4 h-4" />
-            <span className="absolute inset-0 flex items-center justify-center text-xs font-bold font-sans">×</span>
+        <div className="mx-4 mb-2 p-3 bg-red-500/10 border border-red-500/20 rounded-xl text-red-400 text-sm font-medium relative backdrop-blur-sm">
+          <button onClick={() => setError(null)} className="absolute top-3 right-3 text-red-400 hover:text-red-300">
+            <X className="w-4 h-4" />
           </button>
           {error}
         </div>
       )}
 
-      {/* Main scrollable area */}
-      <main className="flex-1 overflow-y-auto p-4 flex flex-col gap-5 relative">
+      {/* Main Content Area */}
+      <main className="flex-1 overflow-y-auto px-4 pb-4 flex flex-col relative no-scrollbar">
         
-        {/* Input Card */}
-        <div className="flex flex-col bg-white rounded-3xl shadow-sm border border-[#E5E2DA] overflow-hidden min-h-[220px] shrink-0">
-          <div className="px-5 py-3 border-b border-[#F5F5F0] flex items-center justify-between bg-white">
-            <span className="text-[10px] uppercase tracking-widest font-bold text-[#A5A296] flex items-center gap-2">
-               <Mic className="w-3 h-3"/> Input
-            </span>
-            <div className="flex gap-3">
-              {isRecording && <span className="text-[9px] bg-[#F27D26]/10 text-[#F27D26] px-2 py-0.5 rounded-md font-bold animate-pulse">RECORDING</span>}
-              <button onClick={() => copyToClipboard(rawText, true)} disabled={!rawText} className="text-[#A5A296] hover:text-[#5A5A40] disabled:opacity-30">
-                 {copiedRaw ? <Check className="w-4 h-4 text-[#25D366]" /> : <Copy className="w-4 h-4" />}
+        {/* Modes Selection Chips */}
+        <div className="mb-4">
+          <p className="text-xs font-bold text-white/50 uppercase tracking-wider mb-3 px-2">Transformation Mode</p>
+          <div className="flex overflow-x-auto pb-2 -mx-4 px-4 gap-2 no-scrollbar snap-x">
+            {MODES.map(m => (
+              <button
+                key={m.id}
+                onClick={() => setSelectedMode(m.id)}
+                className={`flex-none snap-start px-4 py-2.5 rounded-2xl text-sm font-medium transition-all duration-300 border flex items-center gap-2 ${
+                  selectedMode === m.id 
+                    ? 'bg-blue-500 text-white border-blue-400 shadow-[0_0_20px_rgba(59,130,246,0.3)]' 
+                    : 'bg-white/5 text-white/70 border-white/10 hover:bg-white/10'
+                }`}
+              >
+                <span>{m.icon}</span> {m.label}
               </button>
-            </div>
-          </div>
-          <div className="relative flex-1 w-full flex flex-col">
-            <textarea
-              value={rawText}
-              onChange={(e) => setRawText(e.target.value)}
-              placeholder="Tap the mic to speak, or type here..."
-              className="flex-1 w-full px-5 py-4 resize-none focus:outline-none text-[#7D7D7D] font-serif italic leading-relaxed text-[17px] placeholder:text-[#E5E2DA] bg-transparent pb-10"
-            />
-            {interimText && (
-               <div className="absolute left-5 bottom-4 text-[#A5A296] bg-[#FDFBF7] px-2 py-1 rounded text-sm animate-pulse border border-[#E5E2DA] max-w-[90%] truncate">
-                 {interimText}
-               </div>
-            )}
+            ))}
           </div>
         </div>
 
-        {/* Output Card */}
-        <div className="flex flex-col bg-white rounded-3xl shadow-md border border-[#E5E2DA] overflow-hidden min-h-[250px] shrink-0 relative">
-          <div className="px-5 py-3 border-b border-[#F5F5F0] flex items-center justify-between bg-[#FDFBF7]/30">
-            <span className="text-[10px] uppercase tracking-widest font-bold text-[#5A5A40] flex items-center gap-2">
-              <Sparkles className="w-3 h-3"/> Output
-            </span>
-            {mode === 'transcribe' ? (
-              <div className="relative inline-block">
-                <select 
-                  value={format}
-                  onChange={(e) => setFormat(e.target.value)}
-                  className="appearance-none text-[9px] pl-2 pr-6 py-1 bg-white border border-[#E5E2DA] rounded text-[#5A5A40] font-bold uppercase shadow-sm outline-none focus:border-[#A5A296] w-full"
-                >
-                  {FORMATS.map(f => (
-                    <option key={f.id} value={f.id}>{f.label}</option>
-                  ))}
-                </select>
-                <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-1.5 text-[#5A5A40]">
-                  <svg className="w-3 h-3 fill-current" viewBox="0 0 20 20">
-                    <path d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clipRule="evenodd" fillRule="evenodd" />
-                  </svg>
-                </div>
-              </div>
-            ) : (
-              <span className="text-[9px] px-2 py-0.5 bg-white border border-[#E5E2DA] rounded text-[#5A5A40] font-bold uppercase shadow-sm">
-                Translation
-              </span>
-            )}
-          </div>
-          <div className="flex-1 flex flex-col relative bg-white">
-            <textarea
-              value={refinedText}
-              readOnly
-              placeholder="Refined translation will appear here..."
-              className="flex-1 w-full px-5 py-4 pb-14 resize-none focus:outline-none text-[#2D2D2D] font-serif leading-relaxed text-lg bg-transparent placeholder:text-[#E5E2DA]"
-            />
-            {/* Action Bar on Output */}
-            <div className="absolute bottom-4 right-4 z-10 flex items-center gap-4">
-               <button 
-                 onClick={() => setRefinedText('')} 
-                 className={`text-[10px] font-bold text-[#A5A296] hover:text-[#D97757] uppercase tracking-widest transition-colors ${!refinedText ? 'opacity-0 pointer-events-none' : ''}`}
-               >
-                 Clear
-               </button>
-               <button 
-                 onClick={() => copyToClipboard(refinedText, false)} 
-                 disabled={!refinedText} 
-                 className="flex items-center gap-2 bg-[#5A5A40] text-white hover:bg-[#4A4A35] px-5 py-2 rounded-full text-xs font-bold tracking-wider uppercase transition-all shadow-sm disabled:opacity-50 disabled:hidden"
-               >
-                 {copiedRefined ? <Check className="w-4 h-4 text-[#25D366]" /> : <Copy className="w-4 h-4" />}
-                 Copy
-               </button>
-            </div>
-          </div>
+        {/* Dynamic Input / Output Area */}
+        <div className="flex-1 flex flex-col relative">
           
-          <AnimatePresence>
-            {isRefining && (
-               <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 bg-[#FDFBF7]/80 backdrop-blur-[2px] flex items-center justify-center z-20">
-                  <div className="flex flex-col items-center gap-4">
-                    <div className="p-4 bg-white rounded-full shadow-lg border border-[#E5E2DA]">
-                       <RefreshCw className="w-6 h-6 text-[#5A5A40] animate-spin" />
-                    </div>
-                    <span className="text-xs font-bold text-[#A5A296] uppercase tracking-widest bg-white/50 px-3 py-1 rounded-full">Processing...</span>
+          <AnimatePresence mode="wait">
+            {!refinedText && !isRefining ? (
+              <motion.div 
+                key="input"
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.95 }}
+                className="flex-1 bg-white/5 border border-white/10 rounded-3xl p-5 flex flex-col relative shadow-inner shadow-white/5 focus-within:border-blue-500/50 transition-colors"
+              >
+                <textarea
+                  ref={textareaRef}
+                  value={rawText}
+                  onChange={(e) => setRawText(e.target.value)}
+                  placeholder="Type or dictate your thoughts..."
+                  className="flex-1 w-full bg-transparent resize-none outline-none text-white text-xl placeholder:text-white/20 leading-relaxed font-medium"
+                />
+                {interimText && (
+                  <div className="absolute bottom-5 left-5 right-5 text-white/50 text-lg animate-pulse pointer-events-none">
+                    {interimText}
                   </div>
-               </motion.div>
+                )}
+                {rawText && (
+                  <div className="absolute bottom-4 right-4 z-10 flex gap-2">
+                    <button 
+                      onClick={() => setRawText('')}
+                      className="px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-wider text-white/40 hover:text-white/80 bg-white/5 hover:bg-white/10 transition-colors"
+                    >
+                      Clear
+                    </button>
+                    <button 
+                      onClick={refineText}
+                      className="flex items-center gap-2 px-5 py-2 rounded-xl bg-blue-500 hover:bg-blue-600 text-white font-bold tracking-wide shadow-lg shadow-blue-500/20 transition-all active:scale-95"
+                    >
+                      <Sparkles className="w-4 h-4" /> Transform
+                    </button>
+                  </div>
+                )}
+              </motion.div>
+            ) : isRefining ? (
+              <motion.div 
+                key="loading"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                className="flex-1 flex flex-col items-center justify-center"
+              >
+                {/* Magical Animation for Processing */}
+                <div className="relative w-24 h-24 flex items-center justify-center mb-6">
+                  <motion.div 
+                    animate={{ rotate: 360 }}
+                    transition={{ repeat: Infinity, duration: 3, ease: "linear" }}
+                    className="absolute inset-0 rounded-full border-t-2 border-l-2 border-blue-400 opacity-50"
+                  />
+                  <motion.div 
+                    animate={{ rotate: -360 }}
+                    transition={{ repeat: Infinity, duration: 2, ease: "linear" }}
+                    className="absolute inset-2 rounded-full border-b-2 border-r-2 border-cyan-300 opacity-50"
+                  />
+                  <Sparkles className="w-8 h-8 text-blue-400 animate-pulse" />
+                </div>
+                <h3 className="text-lg font-bold text-white mb-2">Enhancing your text</h3>
+                <p className="text-sm text-white/50 animate-pulse">Applying {MODES.find(m=>m.id === selectedMode)?.label}...</p>
+              </motion.div>
+            ) : (
+              <motion.div 
+                key="output"
+                initial={{ opacity: 0, scale: 0.95 }}
+                animate={{ opacity: 1, scale: 1 }}
+                className="flex-1 flex flex-col relative"
+              >
+                <div className="flex-1 bg-gradient-to-br from-blue-500/10 to-cyan-400/5 border border-blue-500/30 rounded-3xl p-5 flex flex-col relative shadow-[0_0_30px_rgba(59,130,246,0.1)]">
+                  <div className="flex items-center justify-between mb-4">
+                    <span className="text-[10px] font-bold uppercase tracking-widest text-blue-400 flex items-center gap-2 bg-blue-500/10 px-3 py-1 rounded-full border border-blue-500/20">
+                      <Check className="w-3 h-3" /> Ready
+                    </span>
+                    <button 
+                      onClick={() => setRefinedText('')}
+                      className="text-white/40 hover:text-white p-2 rounded-full hover:bg-white/5 transition-colors"
+                    >
+                      <Edit3 className="w-4 h-4" />
+                    </button>
+                  </div>
+                  
+                  <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar">
+                    <p className="text-white text-lg leading-relaxed whitespace-pre-wrap font-medium">{refinedText}</p>
+                  </div>
+
+                  <div className="mt-4 pt-4 border-t border-white/10 flex items-center justify-center">
+                    <button 
+                      onClick={() => copyToClipboard(refinedText)}
+                      className="flex items-center justify-center gap-2 w-full py-4 rounded-2xl bg-white text-[#0F172A] font-bold text-lg hover:bg-blue-50 transition-colors shadow-lg active:scale-95"
+                    >
+                      {copied ? <Check className="w-5 h-5 text-green-500" /> : <Copy className="w-5 h-5" />}
+                      {copied ? 'Copied!' : 'Copy Text'}
+                    </button>
+                  </div>
+                </div>
+              </motion.div>
             )}
           </AnimatePresence>
         </div>
       </main>
 
-      {/* Bottom Segment */}
-      <div className="flex-none bg-[#FDFBF7] border-t border-[#E5E2DA] pb-safe shadow-[0_-10px_40px_rgba(0,0,0,0.03)] z-30 flex flex-col">
-         {/* Language Selectors Floating-like Bar */}
-         <div className="px-5 pt-3 pb-2">
-           <div className={`flex items-center gap-2 bg-white p-1.5 rounded-2xl border border-[#E5E2DA] shadow-sm ${mode === 'transcribe' ? 'justify-center max-w-[200px] mx-auto' : 'justify-between'}`}>
-             <div className="relative flex-1">
-               <select
-                 value={language}
-                 onChange={(e) => setLanguage(e.target.value)}
-                 className="appearance-none w-full text-xs font-bold text-[#5A5A40] bg-transparent pl-4 pr-8 py-2 outline-none text-center rounded-xl focus:bg-[#F5F5F0] transition-colors"
-               >
-                 {LANGUAGES.map(lang => (
-                   <option key={lang.code} value={lang.code}>{lang.label.split(' ')[0]}</option>
-                 ))}
-               </select>
-               <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-3 text-[#A5A296]">
-                  <svg className="w-3 h-3 fill-current" viewBox="0 0 20 20"><path d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clipRule="evenodd" fillRule="evenodd" /></svg>
-               </div>
-             </div>
-             
-             {mode === 'translate' && (
-               <>
-                 <button 
-                   onClick={() => {
-                     const temp = language;
-                     setLanguage(outputLanguage);
-                     setOutputLanguage(temp);
-                   }}
-                   className="w-8 h-8 rounded-full bg-[#FDFBF7] hover:bg-[#F5F5F0] flex items-center justify-center shrink-0 border border-[#E5E2DA] transition-colors text-[#A5A296] hover:text-[#5A5A40]"
-                 >
-                   <ArrowRightLeft className="w-3.5 h-3.5" />
-                 </button>
-
-                 <div className="relative flex-1">
-                   <select
-                     value={outputLanguage}
-                     onChange={(e) => setOutputLanguage(e.target.value)}
-                     className="appearance-none w-full text-xs font-bold text-[#5A5A40] bg-transparent pl-4 pr-8 py-2 outline-none text-center rounded-xl focus:bg-[#F5F5F0] transition-colors"
-                   >
-                     {LANGUAGES.map(lang => (
-                       <option key={lang.code} value={lang.code}>{lang.label.split(' ')[0]}</option>
-                     ))}
-                   </select>
-                    <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-3 text-[#A5A296]">
-                      <svg className="w-3 h-3 fill-current" viewBox="0 0 20 20"><path d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clipRule="evenodd" fillRule="evenodd" /></svg>
-                   </div>
-                 </div>
-               </>
-             )}
-           </div>
-         </div>
-
-         <div className="flex items-center justify-between px-6 pb-6 pt-2 relative">
-            {/* Left Action / Info */}
-            <div className="flex justify-start w-1/3">
-               <button 
-                 onClick={() => { setRawText(''); setInterimText(''); }} 
-                 className={`text-[10px] font-bold text-[#A5A296] hover:text-[#D97757] uppercase tracking-widest transition-colors flex items-center gap-1 ${(!rawText && !interimText) ? 'opacity-0 pointer-events-none' : ''}`}
-               >
-                 Clear
-               </button>
-            </div>
-
-            {/* Center FAB */}
-            <div className="flex items-center justify-center relative z-10 w-1/3">
-               <button
-                  onClick={toggleRecording}
-                  disabled={!SpeechRecognitionAPI}
-                  className={`relative flex items-center justify-center w-16 h-16 rounded-full transition-transform outline-none ${
-                    isRecording 
-                      ? 'bg-[#D97757] text-white shadow-[0_8px_30px_rgba(217,119,87,0.4)] border-4 border-[#FDFBF7] scale-110' 
-                      : 'bg-white text-[#5A5A40] border-4 border-[#FDFBF7] shadow-sm hover:scale-105'
-                  } ${!SpeechRecognitionAPI ? 'opacity-50 cursor-not-allowed' : ''}`}
-                >
-                  {isRecording && (
-                     <motion.div animate={{ scale: [1, 1.3, 1] }} transition={{ repeat: Infinity, duration: 1.5 }} className="absolute inset-0 bg-[#D97757] rounded-full opacity-30" />
-                  )}
-                  {isRecording ? <Mic className="w-7 h-7" /> : <MicOff className="w-7 h-7" />}
-                </button>
-            </div>
-
-            {/* Right Action */}
-            <div className="flex justify-end w-1/3">
-               <button
-                 onClick={refineText}
-                 disabled={!rawText.trim() || isRefining || isRecording}
-                 className="flex items-center justify-center gap-2 bg-[#5A5A40] hover:bg-[#4A4A35] disabled:bg-[#F5F5F0] disabled:text-[#A5A296] text-white px-4 py-3 rounded-2xl shadow-sm font-medium text-sm transition-colors"
-               >
-                 {isRefining ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
-               </button>
-            </div>
-         </div>
-      </div>
-
-      {/* History Full-Screen Modal */}
+      {/* Voice Interaction Button Footer (Only show when not refining and no final output) */}
       <AnimatePresence>
-        {isHistoryOpen && (
+        {!isRefining && !refinedText && (
           <motion.div 
-             initial={{ y: '100%' }}
-             animate={{ y: 0 }}
-             exit={{ y: '100%' }}
-             transition={{ type: 'spring', damping: 25, stiffness: 200 }}
-             className="absolute inset-0 z-50 bg-[#FDFBF7] flex flex-col"
+            initial={{ y: 100 }}
+            animate={{ y: 0 }}
+            exit={{ y: 100 }}
+            className="flex-none p-6 pt-2 relative z-20 pb-safe"
           >
-             <header className="flex-none px-5 py-4 border-b border-[#E5E2DA] flex items-center justify-between bg-white shadow-sm z-10">
-                <h2 className="text-xl font-semibold font-serif italic text-[#2D2D2D]">History</h2>
-                <div className="flex items-center gap-3">
-                  <button 
-                    onClick={() => {
-                       if (window.confirm('Clear all history?')) {
-                          setHistory([]);
-                          localStorage.removeItem('fluent_scribe_history');
-                       }
-                    }} 
-                    className="text-[10px] text-red-500 font-bold uppercase tracking-widest px-2 hover:opacity-70 transition-opacity"
-                  >
-                    Clear All
-                  </button>
-                  <button onClick={() => setIsHistoryOpen(false)} className="px-5 py-2 bg-[#5A5A40] text-white text-[10px] font-bold uppercase rounded-full tracking-widest shadow-sm">
-                    Done
-                  </button>
-                </div>
+            <div className="flex flex-col items-center justify-center relative">
+              <span className="text-[11px] font-bold text-white/40 uppercase tracking-widest mb-4">
+                {isRecording ? 'Listening...' : 'Speak your thoughts'}
+              </span>
+              
+              <button
+                onClick={toggleRecording}
+                className={`relative flex items-center justify-center w-20 h-20 rounded-full transition-all outline-none z-10 ${
+                  isRecording 
+                    ? 'bg-red-500 text-white shadow-[0_0_40px_rgba(239,68,68,0.5)] scale-110' 
+                    : 'bg-gradient-to-tr from-blue-500 to-cyan-400 text-white shadow-[0_10px_30px_rgba(59,130,246,0.3)] hover:scale-105'
+                }`}
+              >
+                {isRecording && (
+                  <>
+                    <motion.div animate={{ scale: [1, 1.4, 1], opacity: [0.3, 0, 0.3] }} transition={{ repeat: Infinity, duration: 2 }} className="absolute inset-0 bg-red-500 rounded-full" />
+                    <motion.div animate={{ scale: [1, 1.2, 1], opacity: [0.5, 0, 0.5] }} transition={{ repeat: Infinity, duration: 1.5 }} className="absolute inset-0 bg-red-400 rounded-full" />
+                  </>
+                )}
+                {isRecording ? <div className="w-6 h-6 bg-white rounded-sm" /> : <Mic className="w-8 h-8" />}
+              </button>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* History Modal */}
+      <AnimatePresence>
+        {showHistory && (
+          <motion.div 
+            initial={{ y: '100%' }}
+            animate={{ y: 0 }}
+            exit={{ y: '100%' }}
+            transition={{ type: "spring", damping: 25, stiffness: 200 }}
+            className="absolute inset-0 z-50 bg-[#0F172A] flex flex-col"
+          >
+             <header className="flex-none px-6 py-5 border-b border-white/10 flex items-center justify-between bg-[#0F172A] z-10">
+                <h2 className="text-xl font-bold">History</h2>
+                <button onClick={() => setShowHistory(false)} className="w-10 h-10 rounded-full bg-white/10 flex items-center justify-center text-white/70 hover:text-white">
+                  <X className="w-5 h-5" />
+                </button>
              </header>
-             <div className="flex-1 overflow-y-auto p-4 space-y-3 pb-safe">
+             <div className="flex-1 overflow-y-auto p-4 space-y-3">
                 {history.length === 0 ? (
-                   <div className="text-center py-12 flex flex-col items-center justify-center opacity-50">
-                      <Clock className="w-10 h-10 mb-3 text-[#5A5A40]" />
-                      <p className="text-sm font-semibold text-[#5A5A40]">No history yet.</p>
-                      <p className="text-[11px] text-[#A5A296] mt-2 max-w-[200px]">Your refined transcriptions and translations will appear here.</p>
-                   </div>
+                  <div className="h-full flex flex-col items-center justify-center opacity-50">
+                    <Clock className="w-12 h-12 mb-4 text-white/30" />
+                    <p className="text-white/60 font-medium">No history yet</p>
+                  </div>
                 ) : (
-                   history.map(item => (
-                      <div 
-                         key={item.id} 
-                         role="button"
-                         tabIndex={0}
-                         onKeyDown={(e) => {
-                            if (e.key === 'Enter' || e.key === ' ') {
-                               e.preventDefault();
-                               setRawText(item.rawText);
-                               setRefinedText(item.refinedText);
-                               setMode(item.mode);
-                               setLanguage(item.language);
-                               if (item.outputLanguage) setOutputLanguage(item.outputLanguage);
-                               if (item.format) setFormat(item.format);
-                               setIsHistoryOpen(false);
-                            }
-                         }}
-                         onClick={() => {
-                            setRawText(item.rawText);
-                            setRefinedText(item.refinedText);
-                            setMode(item.mode);
-                            setLanguage(item.language);
-                            if (item.outputLanguage) setOutputLanguage(item.outputLanguage);
-                            if (item.format) setFormat(item.format);
-                            setIsHistoryOpen(false);
-                         }}
-                         className="w-full text-left p-4 bg-white border border-[#E5E2DA] rounded-2xl hover:border-[#A5A296] hover:shadow-sm transition-all focus:outline-none focus:ring-2 focus:ring-[#5A5A40]/30 cursor-pointer block"
-                      >
-                         <div className="flex justify-between items-start mb-2">
-                            <span className="text-[10px] font-bold uppercase tracking-widest text-[#5A5A40] px-2 py-0.5 bg-[#FDFBF7] border border-[#E5E2DA] rounded">
-                               {item.mode === 'translate' ? `Translate: ${LANGUAGES.find(l=>l.code===item.outputLanguage)?.label.split(' ')[0] || item.outputLanguage}` : `Scribe: ${FORMATS.find(f=>f.id===item.format)?.label || 'Standard'}`}
-                            </span>
-                            <div className="flex items-center gap-3">
-                               <span className="text-[10px] text-[#A5A296] font-bold tracking-widest">
-                                  {new Date(item.timestamp).toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
-                               </span>
-                               <button 
-                                  onClick={(e) => {
-                                     e.stopPropagation();
-                                     const updated = history.filter(h => h.id !== item.id);
-                                     setHistory(updated);
-                                     localStorage.setItem('fluent_scribe_history', JSON.stringify(updated));
-                                  }}
-                                  className="text-red-400 hover:text-red-600 transition-colors p-1 rounded-full hover:bg-red-50"
-                               >
-                                  <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"></path><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"></path><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"></path></svg>
-                               </button>
-                            </div>
-                         </div>
-                         <p className="text-xs text-[#A5A296] font-serif italic truncate mb-2">"{item.rawText}"</p>
-                         <p className="text-[15px] font-semibold text-[#2D2D2D] line-clamp-3">{item.refinedText}</p>
+                  history.map(item => (
+                    <div 
+                      key={item.id}
+                      onClick={() => {
+                        setRawText(item.rawText);
+                        setRefinedText(item.refinedText);
+                        setSelectedMode(item.mode);
+                        setShowHistory(false);
+                      }}
+                      className="bg-white/5 border border-white/10 p-5 rounded-3xl cursor-pointer hover:bg-white/10 transition-colors"
+                    >
+                      <div className="flex justify-between items-center mb-3">
+                        <span className="text-[10px] font-bold uppercase tracking-widest text-blue-400 bg-blue-500/10 px-2 py-1 rounded-md border border-blue-500/20">
+                          {MODES.find(m => m.id === item.mode)?.label || item.mode}
+                        </span>
+                        <span className="text-[10px] text-white/30 font-bold tracking-widest">
+                          {new Date(item.timestamp).toLocaleDateString()}
+                        </span>
                       </div>
-                   ))
+                      <p className="text-sm text-white/40 italic mb-3 line-clamp-2">"{item.rawText}"</p>
+                      <p className="text-base text-white/90 font-medium line-clamp-3">{item.refinedText}</p>
+                    </div>
+                  ))
                 )}
              </div>
           </motion.div>
         )}
       </AnimatePresence>
 
-      <IOSInstallPrompt />
-      <AppWalkthrough isOpen={isWalkthroughOpen} onClose={() => setIsWalkthroughOpen(false)} />
+      {/* About Modal */}
+      <AnimatePresence>
+        {showAbout && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="absolute inset-0 z-50 bg-[#0F172A]/80 backdrop-blur-md flex items-center justify-center p-6"
+          >
+             <motion.div 
+                initial={{ scale: 0.9, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                exit={{ scale: 0.9, opacity: 0 }}
+                className="bg-[#1E293B] border border-white/10 p-8 rounded-3xl w-full max-w-sm relative shadow-2xl"
+             >
+                <button onClick={() => setShowAbout(false)} className="absolute top-4 right-4 w-8 h-8 bg-white/5 rounded-full flex items-center justify-center text-white/50 hover:text-white">
+                  <X className="w-4 h-4" />
+                </button>
+                <div className="w-12 h-12 bg-gradient-to-tr from-blue-500 to-cyan-400 rounded-xl flex items-center justify-center shadow-lg shadow-blue-500/20 mb-5">
+                  <Sparkles className="w-6 h-6 text-white" />
+                </div>
+                <h2 className="text-2xl font-bold mb-2">EasyText</h2>
+                <p className="text-sm text-white/60 mb-6 leading-relaxed">
+                  Built to support privacy-first communication and empower users to express freely without misuse of their content.
+                </p>
+                
+                <div className="bg-white/5 rounded-2xl p-4 mb-6 border border-white/5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-medium text-white/80">Personalization (Beta)</span>
+                    <div className="w-10 h-6 bg-blue-500 rounded-full relative cursor-pointer">
+                      <div className="w-4 h-4 bg-white rounded-full absolute right-1 top-1" />
+                    </div>
+                  </div>
+                  <p className="text-[10px] text-white/40 mt-2 uppercase tracking-widest font-bold">App learns writing style</p>
+                </div>
+
+                <div className="text-center">
+                  <p className="text-[10px] uppercase tracking-widest font-bold text-white/30">Powered by Takweyat</p>
+                </div>
+             </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
     </div>
   );
 }

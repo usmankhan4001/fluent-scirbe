@@ -18,14 +18,10 @@ app.use(express.json());
 // Serve static files from the React app
 app.use(express.static(path.join(__dirname, 'dist')));
 
-// Initialize inside routes to ensure fresh env variables if needed
 app.get('/api/health', async (req, res) => {
   try {
     const key = process.env.GEMINI_API_KEY;
     const keyStatus = key ? `Present (Starts with ${key.substring(0, 4)}...)` : 'Missing';
-    
-    // Test if we can list models to verify API key validity
-    // Note: listModels might not be available in all SDK versions or configurations
     res.json({
       status: 'ok',
       port: port,
@@ -38,21 +34,8 @@ app.get('/api/health', async (req, res) => {
   }
 });
 
-app.get('/api/test-models', async (req, res) => {
-  try {
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) return res.status(500).json({ error: "No API key found in env" });
-    
-    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey.trim()}`);
-    const data = await response.json();
-    res.json(data);
-  } catch (error) {
-    res.status(500).json({ error: error.message, stack: error.stack });
-  }
-});
-
 app.post('/api/refine', async (req, res) => {
-  const { prompt } = req.body;
+  const { prompt, mode } = req.body;
 
   if (!process.env.GEMINI_API_KEY) {
     return res.status(500).json({ error: 'API key not configured on server' });
@@ -67,56 +50,77 @@ app.post('/api/refine', async (req, res) => {
     if (!apiKey || !apiKey.trim()) {
       return res.status(500).json({ error: 'API key not configured on server' });
     }
-    apiKey = apiKey.trim(); // Prevent Dokploy newline injection from breaking URL routing
+    apiKey = apiKey.trim();
 
-    const fallbackModels = [
-      'gemini-2.5-flash',
-      'gemini-flash-latest',
-      'gemini-2.0-flash'
-    ];
-
-    let finalResponseText = null;
-    let lastError = null;
-
-    for (const modelName of fallbackModels) {
-      try {
-        console.log(`Attempting REST API generation with model: ${modelName}`);
-        
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`;
-        
-        const response = await fetch(url, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            contents: [{ parts: [{ text: prompt }] }]
-          })
-        });
-
-        const data = await response.json();
-
-        if (!response.ok) {
-          throw new Error(data.error?.message || JSON.stringify(data));
-        }
-
-        if (data.candidates && data.candidates[0]?.content?.parts?.[0]?.text) {
-          finalResponseText = data.candidates[0].content.parts[0].text;
-          console.log(`Success with ${modelName}!`);
-          break; // Success, exit the loop
-        } else {
-          throw new Error('Unexpected response structure from Gemini API');
-        }
-      } catch (err) {
-        lastError = err;
-        console.warn(`REST API Model ${modelName} failed: ${err.message}`);
-      }
+    let formatInstruction = "";
+    switch (mode) {
+      case 'professional':
+        formatInstruction = "Format the text in a highly professional, articulate, and formal tone. Ensure proper business structure and clarity.";
+        break;
+      case 'email':
+        formatInstruction = "Format the text as a professional email. Add Subject line, Greeting, Body, and Sign-off appropriately based on the context.";
+        break;
+      case 'technical':
+        formatInstruction = "Format the text as technical writing. Be precise, objective, concise, and structured. Use bullet points if appropriate.";
+        break;
+      case 'coding':
+        formatInstruction = "Format the text as a coding/developer prompt. Highlight logic, constraints, edge cases, and code architecture explicitly so a developer or AI assistant can easily understand.";
+        break;
+      case 'ai_prompt':
+        formatInstruction = "Format and structure the text as a high-quality instructional prompt for an AI. Include role definition, task description, context, and constraints.";
+        break;
+      case 'casual':
+        formatInstruction = "Format the text as a casual chat message in a modern 'Gen Z' style. Keep it relaxed, conversational, and use natural modern slang or abbreviations if it fits.";
+        break;
+      case 'diary':
+        formatInstruction = "Format the text as a personal diary or journal entry. Make it reflective, expressive, and written from a first-person perspective.";
+        break;
+      default:
+        formatInstruction = "Ensure perfect grammar, spelling, and punctuation without changing the core meaning.";
+        break;
     }
 
-    if (finalResponseText) {
-      res.json({ text: finalResponseText });
+    const fullPrompt = `You are an expert text editor. I am giving you raw text (which may be dictated speech or rough notes).
+    
+Your task:
+1. Fix any grammatical, spelling, and punctuation errors.
+2. ${formatInstruction}
+
+Constraints:
+- Respond ONLY with the finalized, refined text. Do not add any conversational filler or preambles.
+
+Raw Text:
+"""
+${prompt}
+"""`;
+
+    // To ensure fast response, we ONLY use gemini-2.5-flash as it is the fastest and most capable for text tasks.
+    // Iterating over models takes too much time.
+    const modelName = 'gemini-2.5-flash';
+    console.log(`Attempting generation with ${modelName}`);
+    
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`;
+    
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: fullPrompt }] }]
+      })
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      throw new Error(data.error?.message || JSON.stringify(data));
+    }
+
+    if (data.candidates && data.candidates[0]?.content?.parts?.[0]?.text) {
+      res.json({ text: data.candidates[0].content.parts[0].text });
     } else {
-      throw lastError || new Error("All native fallback models failed.");
+      throw new Error('Unexpected response structure from Gemini API');
     }
 
   } catch (error) {
@@ -127,8 +131,6 @@ app.post('/api/refine', async (req, res) => {
   }
 });
 
-// The "catchall" handler: for any request that doesn't
-// match one above, send back React's index.html file.
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'dist/index.html'));
 });
