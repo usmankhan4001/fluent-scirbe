@@ -38,6 +38,19 @@ app.get('/api/health', async (req, res) => {
   }
 });
 
+app.get('/api/test-models', async (req, res) => {
+  try {
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) return res.status(500).json({ error: "No API key found in env" });
+    
+    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey.trim()}`);
+    const data = await response.json();
+    res.json(data);
+  } catch (error) {
+    res.status(500).json({ error: error.message, stack: error.stack });
+  }
+});
+
 app.post('/api/refine', async (req, res) => {
   const { prompt } = req.body;
 
