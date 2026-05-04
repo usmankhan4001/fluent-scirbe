@@ -52,30 +52,50 @@ app.post('/api/refine', async (req, res) => {
 
   try {
     const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-    // Let the SDK use its default API version (usually v1beta or v1 based on model)
-    const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
-    const result = await model.generateContent(prompt);
-    const response = await result.response;
-    const text = response.text();
-    res.json({ text });
-  } catch (error) {
-    console.error('Detailed Gemini API Error:', error);
     
-    // Solid fallback strategy in case primary model or endpoint fails
-    try {
-      console.log('Attempting fallback with alternative model/settings...');
-      const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-      const fallbackModel = genAI.getGenerativeModel({ model: 'gemini-1.5-flash-8b' });
-      const result = await fallbackModel.generateContent(prompt);
-      const response = await result.response;
-      res.json({ text: response.text() });
-    } catch (fallbackError) {
-      console.error('Fallback Gemini API Error:', fallbackError);
-      res.status(500).json({ 
-        error: error.message || 'Failed to refine text',
-        details: error.stack
-      });
+    // Some API keys/regions 404 on certain models. We cycle through the best available models
+    // to guarantee that the request succeeds regardless of the user's specific GCP access.
+    const fallbackModels = [
+      'gemini-1.5-flash',
+      'gemini-2.0-flash',
+      'gemini-1.5-pro',
+      'gemini-1.5-flash-8b',
+      'gemini-pro' // legacy fallback
+    ];
+
+    let finalResponseText = null;
+    let lastError = null;
+
+    for (const modelName of fallbackModels) {
+      try {
+        console.log(`Attempting generation with model: ${modelName}`);
+        // We do not specify apiVersion to let the SDK use the correct one for the model
+        const model = genAI.getGenerativeModel({ model: modelName });
+        const result = await model.generateContent(prompt);
+        const response = await result.response;
+        finalResponseText = response.text();
+        console.log(`Success with ${modelName}!`);
+        break; // Break loop on success
+      } catch (err) {
+        lastError = err;
+        console.warn(`Model ${modelName} failed: ${err.message}`);
+        // Continue to the next model in the list
+      }
     }
+
+    if (finalResponseText) {
+      res.json({ text: finalResponseText });
+    } else {
+      // If ALL models fail, throw the last error
+      throw lastError || new Error("All fallback models failed.");
+    }
+
+  } catch (error) {
+    console.error('Total Gemini API Failure:', error);
+    res.status(500).json({ 
+      error: error.message || 'Failed to refine text',
+      details: error.stack
+    });
   }
 });
 
