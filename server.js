@@ -1,6 +1,5 @@
 import express from 'express';
 import cors from 'cors';
-import { GoogleGenerativeAI } from '@google/generative-ai';
 import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -51,16 +50,16 @@ app.post('/api/refine', async (req, res) => {
   }
 
   try {
-    const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-    
-    // Some API keys/regions 404 on certain models. We cycle through the best available models
-    // to guarantee that the request succeeds regardless of the user's specific GCP access.
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      return res.status(500).json({ error: 'API key not configured on server' });
+    }
+
     const fallbackModels = [
       'gemini-1.5-flash',
       'gemini-2.0-flash',
       'gemini-1.5-pro',
-      'gemini-1.5-flash-8b',
-      'gemini-pro' // legacy fallback
+      'gemini-pro'
     ];
 
     let finalResponseText = null;
@@ -68,33 +67,49 @@ app.post('/api/refine', async (req, res) => {
 
     for (const modelName of fallbackModels) {
       try {
-        console.log(`Attempting generation with model: ${modelName}`);
-        // We do not specify apiVersion to let the SDK use the correct one for the model
-        const model = genAI.getGenerativeModel({ model: modelName });
-        const result = await model.generateContent(prompt);
-        const response = await result.response;
-        finalResponseText = response.text();
-        console.log(`Success with ${modelName}!`);
-        break; // Break loop on success
+        console.log(`Attempting REST API generation with model: ${modelName}`);
+        
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`;
+        
+        const response = await fetch(url, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            contents: [{ parts: [{ text: prompt }] }]
+          })
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+          throw new Error(data.error?.message || JSON.stringify(data));
+        }
+
+        if (data.candidates && data.candidates[0]?.content?.parts?.[0]?.text) {
+          finalResponseText = data.candidates[0].content.parts[0].text;
+          console.log(`Success with ${modelName}!`);
+          break; // Success, exit the loop
+        } else {
+          throw new Error('Unexpected response structure from Gemini API');
+        }
       } catch (err) {
         lastError = err;
-        console.warn(`Model ${modelName} failed: ${err.message}`);
-        // Continue to the next model in the list
+        console.warn(`REST API Model ${modelName} failed: ${err.message}`);
       }
     }
 
     if (finalResponseText) {
       res.json({ text: finalResponseText });
     } else {
-      // If ALL models fail, throw the last error
-      throw lastError || new Error("All fallback models failed.");
+      throw lastError || new Error("All native fallback models failed.");
     }
 
   } catch (error) {
     console.error('Total Gemini API Failure:', error);
     res.status(500).json({ 
-      error: error.message || 'Failed to refine text',
-      details: error.stack
+      error: error.message || 'Failed to refine text'
     });
   }
 });
