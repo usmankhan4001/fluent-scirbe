@@ -87,9 +87,8 @@ export default function App() {
   useEffect(() => {
     if (SpeechRecognitionAPI) {
       const recognition = new SpeechRecognitionAPI();
-      // Android Chrome has a text-repeating bug with continuous=true.
-      // iOS Safari blocks auto-restarting in onend, so it REQUIRES continuous=true.
-      recognition.continuous = isIOS ? true : false; 
+      // Use continuous=false everywhere to prevent Android repeating bugs and iOS silent crashes
+      recognition.continuous = false; 
       recognition.interimResults = true;
       recognition.lang = language;
 
@@ -107,13 +106,7 @@ export default function App() {
         
         if (finalTranscript) {
           setRawText(prev => {
-            // If iOS (continuous=true), we must prevent it from repeating the entire transcript history
-            if (isIOS) {
-               const trimmedPrev = prev.trim();
-               const trimmedFinal = finalTranscript.trim();
-               if (trimmedPrev.endsWith(trimmedFinal)) return prev;
-            }
-            return prev + (prev && !prev.endsWith(' ') ? ' ' : '') + finalTranscript;
+            return prev + (prev && !prev.endsWith(' ') ? ' ' : '') + finalTranscript.trim();
           });
         }
         setInterimText(interimTranscript);
@@ -132,16 +125,21 @@ export default function App() {
 
       recognition.onend = () => {
         // If we are still supposed to be recording, restart it.
-        // This handles cases where the browser stops recognition due to silence or time limits.
         if (isRecordingRef.current) {
             try {
                recognition.start();
             } catch (e) {
                console.error('Failed to auto-restart recognition:', e);
-               // Try again after a short delay if it failed (e.g. still stopping)
+               // Try again after a short delay
                setTimeout(() => {
                  if (isRecordingRef.current) {
-                   try { recognition.start(); } catch (err) {}
+                   try { 
+                     recognition.start(); 
+                   } catch (err) {
+                     // On iOS, auto-restarting is blocked without a physical tap.
+                     // We MUST turn the UI button off so the user knows the mic died and they need to tap it again!
+                     setRecordingState(false);
+                   }
                  }
                }, 1000);
             }
@@ -170,7 +168,7 @@ export default function App() {
     }
   }, [language]);
 
-  const toggleRecording = async () => {
+  const toggleRecording = () => {
     if (!recognitionRef.current) return;
     
     setError(null);
@@ -182,22 +180,8 @@ export default function App() {
       setRawText('');
       setInterimText('');
       setRefinedText('');
-
-      try {
-        // Explicitly request mic access first to force Safari/iOS to show the permission prompt.
-        // webkitSpeechRecognition often fails silently to ask for permissions on iOS.
-        if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-           const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-           // Immediately stop the raw stream tracks so we don't hold the mic twice
-           stream.getTracks().forEach(track => track.stop());
-        }
-      } catch (err) {
-        setError('Microphone permission denied. Please allow microphone access in your iOS/Browser settings.');
-        console.error('getUserMedia error:', err);
-        return;
-      }
-
       setRecordingState(true);
+      
       try {
         recognitionRef.current.start();
       } catch (err) {
