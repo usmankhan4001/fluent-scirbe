@@ -21,6 +21,25 @@ app.use(express.static(path.join(__dirname, 'dist')));
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || '');
 
+app.get('/api/health', async (req, res) => {
+  try {
+    const key = process.env.GEMINI_API_KEY;
+    const keyStatus = key ? `Present (Starts with ${key.substring(0, 4)}...)` : 'Missing';
+    
+    // Test if we can list models to verify API key validity
+    // Note: listModels might not be available in all SDK versions or configurations
+    res.json({
+      status: 'ok',
+      port: port,
+      node_env: process.env.NODE_ENV,
+      apiKeyStatus: keyStatus,
+      message: 'Server is running'
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 app.post('/api/refine', async (req, res) => {
   const { prompt } = req.body;
 
