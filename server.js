@@ -50,10 +50,11 @@ app.post('/api/refine', async (req, res) => {
   }
 
   try {
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) {
+    let apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey || !apiKey.trim()) {
       return res.status(500).json({ error: 'API key not configured on server' });
     }
+    apiKey = apiKey.trim(); // Prevent Dokploy newline injection from breaking URL routing
 
     const fallbackModels = [
       'gemini-1.5-flash',
