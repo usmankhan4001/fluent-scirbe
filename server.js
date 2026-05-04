@@ -19,8 +19,7 @@ app.use(express.json());
 // Serve static files from the React app
 app.use(express.static(path.join(__dirname, 'dist')));
 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || '');
-
+// Initialize inside routes to ensure fresh env variables if needed
 app.get('/api/health', async (req, res) => {
   try {
     const key = process.env.GEMINI_API_KEY;
@@ -52,19 +51,31 @@ app.post('/api/refine', async (req, res) => {
   }
 
   try {
-    // Specify v1 version explicitly to avoid 404s from v1beta
-    const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' }, { apiVersion: 'v1' });
+    const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+    // Let the SDK use its default API version (usually v1beta or v1 based on model)
+    const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
     const result = await model.generateContent(prompt);
     const response = await result.response;
     const text = response.text();
     res.json({ text });
   } catch (error) {
     console.error('Detailed Gemini API Error:', error);
-    // Log the full error to help debugging
-    res.status(500).json({ 
-      error: error.message || 'Failed to refine text',
-      details: error.stack
-    });
+    
+    // Solid fallback strategy in case primary model or endpoint fails
+    try {
+      console.log('Attempting fallback with alternative model/settings...');
+      const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+      const fallbackModel = genAI.getGenerativeModel({ model: 'gemini-1.5-flash-8b' });
+      const result = await fallbackModel.generateContent(prompt);
+      const response = await result.response;
+      res.json({ text: response.text() });
+    } catch (fallbackError) {
+      console.error('Fallback Gemini API Error:', fallbackError);
+      res.status(500).json({ 
+        error: error.message || 'Failed to refine text',
+        details: error.stack
+      });
+    }
   }
 });
 

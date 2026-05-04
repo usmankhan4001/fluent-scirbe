@@ -83,7 +83,7 @@ export default function App() {
   useEffect(() => {
     if (SpeechRecognitionAPI) {
       const recognition = new SpeechRecognitionAPI();
-      recognition.continuous = true; 
+      recognition.continuous = false; 
       recognition.interimResults = true;
       recognition.lang = language;
 
@@ -101,9 +101,6 @@ export default function App() {
         
         if (finalTranscript) {
           setRawText(prev => {
-            const trimmedPrev = prev.trim();
-            const trimmedFinal = finalTranscript.trim();
-            if (trimmedPrev.endsWith(trimmedFinal)) return prev;
             return prev + (prev && !prev.endsWith(' ') ? ' ' : '') + finalTranscript;
           });
         }
