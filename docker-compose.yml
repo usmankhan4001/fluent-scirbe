@@ -1,0 +1,22 @@
+version: '3.8'
+
+services:
+  easytext:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: easytext:latest
+    container_name: easytext
+    restart: unless-stopped
+    ports:
+      - "3001:80"
+    environment:
+      - NODE_ENV=production
+      # This needs to be set in your Dokploy Environment Variables
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:80/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
