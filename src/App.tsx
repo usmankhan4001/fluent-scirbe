@@ -9,6 +9,10 @@ import { AppWalkthrough } from './components/AppWalkthrough';
 // Setup SpeechRecognition interface
 const SpeechRecognitionAPI = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
 
+// Helper to detect iOS (including iPads on iOS 13+)
+const isIOS = typeof window !== 'undefined' && 
+  (/iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1));
+
 interface HistoryItem {
   id: string;
   rawText: string;
@@ -83,7 +87,9 @@ export default function App() {
   useEffect(() => {
     if (SpeechRecognitionAPI) {
       const recognition = new SpeechRecognitionAPI();
-      recognition.continuous = false; 
+      // Android Chrome has a text-repeating bug with continuous=true.
+      // iOS Safari blocks auto-restarting in onend, so it REQUIRES continuous=true.
+      recognition.continuous = isIOS ? true : false; 
       recognition.interimResults = true;
       recognition.lang = language;
 
@@ -101,6 +107,12 @@ export default function App() {
         
         if (finalTranscript) {
           setRawText(prev => {
+            // If iOS (continuous=true), we must prevent it from repeating the entire transcript history
+            if (isIOS) {
+               const trimmedPrev = prev.trim();
+               const trimmedFinal = finalTranscript.trim();
+               if (trimmedPrev.endsWith(trimmedFinal)) return prev;
+            }
             return prev + (prev && !prev.endsWith(' ') ? ' ' : '') + finalTranscript;
           });
         }
