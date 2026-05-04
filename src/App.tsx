@@ -157,15 +157,53 @@ export default function App() {
         throw new Error(errorData.error || 'Failed to refine text');
       }
 
-      const data = await response.json();
-      const newRefined = data.text?.trim() || '';
-      setRefinedText(newRefined);
+      const reader = response.body?.getReader();
+      if (!reader) throw new Error('No stream available');
       
-      if (newRefined) {
+      const decoder = new TextDecoder('utf-8');
+      let finalOutput = '';
+      let isFirstChunk = true;
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        
+        const chunk = decoder.decode(value, { stream: true });
+        const lines = chunk.split('\n');
+        
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            const dataStr = line.replace('data: ', '').trim();
+            if (dataStr && dataStr !== '[DONE]') {
+              try {
+                const data = JSON.parse(dataStr);
+                const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+                if (text) {
+                  finalOutput += text;
+                  setRefinedText(finalOutput);
+                  
+                  // Hide loading screen on first chunk received
+                  if (isFirstChunk) {
+                    setIsRefining(false);
+                    isFirstChunk = false;
+                  }
+                }
+              } catch (e) {
+                // Ignore parse errors from incomplete chunks
+              }
+            }
+          }
+        }
+      }
+      
+      // If the response finished and we somehow never set isRefining(false)
+      setIsRefining(false);
+
+      if (finalOutput) {
         const newItem: HistoryItem = {
           id: Date.now().toString(),
           rawText,
-          refinedText: newRefined,
+          refinedText: finalOutput.trim(),
           mode: selectedMode,
           timestamp: Date.now()
         };
@@ -177,7 +215,6 @@ export default function App() {
       }
     } catch (err: any) {
       setError(err?.message || 'Error refining text.');
-    } finally {
       setIsRefining(false);
     }
   };
