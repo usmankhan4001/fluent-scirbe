@@ -1,93 +1,66 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Mic, MicOff, RefreshCw, Copy, Check, Sparkles, ArrowRightLeft, Clock, HelpCircle } from 'lucide-react';
+import { Mic, Clock, X, Keyboard, Briefcase, Mail, FileText, Code, Cpu, MessageSquare, Book, Trash2, Pin, Sparkles, Globe, Check } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { IOSInstallPrompt } from './components/IOSInstallPrompt';
-import { AppWalkthrough } from './components/AppWalkthrough';
 
-
-
-// Setup SpeechRecognition interface
 const SpeechRecognitionAPI = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
 
-// Helper to detect iOS (including iPads on iOS 13+)
-const isIOS = typeof window !== 'undefined' && 
-  (/iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1));
+type ViewState = 'launch' | 'listening' | 'refining' | 'result';
 
 interface HistoryItem {
   id: string;
   rawText: string;
   refinedText: string;
-  mode: 'transcribe' | 'translate';
-  language: string;
-  outputLanguage?: string;
-  format?: string;
+  format: string;
+  pinned: boolean;
   timestamp: number;
 }
 
-const LANGUAGES = [
-  { code: 'en-US', label: 'English' },
-  { code: 'ur-PK', label: 'Urdu (اردو)' },
-  { code: 'ar-SA', label: 'Arabic (العربية)' }
+const FORMATS = [
+  { id: 'professional', label: 'Professional Writing', desc: 'Clean, authoritative tone.', icon: Briefcase },
+  { id: 'email', label: 'Email Format', desc: 'Structured with Subject/Body/Sign-off.', icon: Mail },
+  { id: 'technical', label: 'Technical Writing', desc: 'Focus on clarity and jargon accuracy.', icon: FileText },
+  { id: 'coding', label: 'Coding / Developer Prompt', desc: 'Structured for documentation or logic.', icon: Code },
+  { id: 'prompt', label: 'AI Prompt Generator', desc: 'Optimized for LLM instructions.', icon: Cpu },
+  { id: 'casual', label: 'Casual Chat', desc: 'Gen-Z slang and relaxed grammar.', icon: MessageSquare },
+  { id: 'diary', label: 'Diary / Personal Journal', desc: 'Reflective and narrative style.', icon: Book }
 ];
 
-const FORMATS = [
-  { id: 'smart', label: 'Smart Auto-Format', desc: 'Understands intent and structures output automatically.' },
-  { id: 'standard', label: 'Standard text', desc: 'Grammar and punctuation fixes only.' },
-  { id: 'email', label: 'Professional Email', desc: 'Formats as a professional email.' },
-  { id: 'whatsapp', label: 'WhatsApp Message', desc: 'Casual but clear text.' },
-  { id: 'prompt', label: 'AI Prompt', desc: 'Optimizes text as an instruction for AI.' }
+const LANGUAGES = [
+  { code: 'en-US', label: 'EN' },
+  { code: 'ur-PK', label: 'UR' },
+  { code: 'ar-SA', label: 'AR' }
 ];
 
 export default function App() {
+  const [viewState, setViewState] = useState<ViewState>('launch');
   const [isRecording, setIsRecording] = useState(false);
   const isRecordingRef = useRef(false);
   
-  const setRecordingState = (state: boolean) => {
-    setIsRecording(state);
-    isRecordingRef.current = state;
-  };
-
   const [language, setLanguage] = useState(LANGUAGES[0].code);
-  const [outputLanguage, setOutputLanguage] = useState(LANGUAGES[1]?.code || LANGUAGES[0].code);
-  const [format, setFormat] = useState(FORMATS[0].id);
-  const [mode, setMode] = useState<'transcribe' | 'translate'>('transcribe');
+  const [targetLanguage, setTargetLanguage] = useState(LANGUAGES[1].code);
   
   const [rawText, setRawText] = useState('');
   const [interimText, setInterimText] = useState('');
   const [refinedText, setRefinedText] = useState('');
-  const [isRefining, setIsRefining] = useState(false);
+  const [selectedFormat, setSelectedFormat] = useState(FORMATS[0].id);
   
-  const [copiedRaw, setCopiedRaw] = useState(false);
-  const [copiedRefined, setCopiedRefined] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
   const [history, setHistory] = useState<HistoryItem[]>([]);
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
-  const [isWalkthroughOpen, setIsWalkthroughOpen] = useState(false);
-
-  useEffect(() => {
-    const hasSeenWalkthrough = localStorage.getItem('fluent_scribe_walkthrough_seen');
-    if (!hasSeenWalkthrough) {
-      setIsWalkthroughOpen(true);
-      localStorage.setItem('fluent_scribe_walkthrough_seen', 'true');
-    }
-  }, []);
-
-  useEffect(() => {
-    const saved = localStorage.getItem('fluent_scribe_history');
-    if (saved) {
-      try {
-        setHistory(JSON.parse(saved));
-      } catch(e) {}
-    }
-  }, []);
+  const [copied, setCopied] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const recognitionRef = useRef<any>(null);
 
   useEffect(() => {
+    const saved = localStorage.getItem('fluent_scribe_v2_history');
+    if (saved) {
+      try { setHistory(JSON.parse(saved)); } catch(e) {}
+    }
+  }, []);
+
+  useEffect(() => {
     if (SpeechRecognitionAPI) {
       const recognition = new SpeechRecognitionAPI();
-      // Use continuous=false everywhere to prevent Android repeating bugs and iOS silent crashes
       recognition.continuous = false; 
       recognition.interimResults = true;
       recognition.lang = language;
@@ -95,19 +68,12 @@ export default function App() {
       recognition.onresult = (event: any) => {
         let interimTranscript = '';
         let finalTranscript = '';
-
         for (let i = event.resultIndex; i < event.results.length; ++i) {
-          if (event.results[i].isFinal) {
-            finalTranscript += event.results[i][0].transcript;
-          } else {
-            interimTranscript += event.results[i][0].transcript;
-          }
+          if (event.results[i].isFinal) finalTranscript += event.results[i][0].transcript;
+          else interimTranscript += event.results[i][0].transcript;
         }
-        
         if (finalTranscript) {
-          setRawText(prev => {
-            return prev + (prev && !prev.endsWith(' ') ? ' ' : '') + finalTranscript.trim();
-          });
+          setRawText(prev => prev + (prev && !prev.endsWith(' ') ? ' ' : '') + finalTranscript.trim());
         }
         setInterimText(interimTranscript);
       };
@@ -115,545 +81,457 @@ export default function App() {
       recognition.onerror = (event: any) => {
         console.error('Recognition error:', event.error);
         if (event.error === 'not-allowed') {
-           setError('Microphone permission denied. Please allow microphone access.');
-           setRecordingState(false);
-        } else if (event.error === 'network') {
-           // Network errors can be transient, try to ignore or show a subtle hint
-           console.warn('Network error, will attempt to recover...');
+           setError('Microphone access denied.');
+           stopRecording();
         }
       };
 
       recognition.onend = () => {
-        // If we are still supposed to be recording, restart it.
         if (isRecordingRef.current) {
-            try {
-               recognition.start();
-            } catch (e) {
-               console.error('Failed to auto-restart recognition:', e);
-               // Try again after a short delay
-               setTimeout(() => {
-                 if (isRecordingRef.current) {
-                   try { 
-                     recognition.start(); 
-                   } catch (err) {
-                     // On iOS, auto-restarting is blocked without a physical tap.
-                     // We MUST turn the UI button off so the user knows the mic died and they need to tap it again!
-                     setRecordingState(false);
-                   }
-                 }
-               }, 1000);
-            }
+          try { recognition.start(); } catch (e) {
+            setTimeout(() => {
+              if (isRecordingRef.current) {
+                try { recognition.start(); } catch (err) { stopRecording(); }
+              }
+            }, 1000);
+          }
         }
       };
 
       recognitionRef.current = recognition;
     } else {
-      setError('Speech recognition is not supported in this browser.');
+      setError('Speech recognition not supported.');
     }
-    
-    return () => {
-      if (recognitionRef.current) {
-        recognitionRef.current.stop();
-      }
-    };
+    return () => { if (recognitionRef.current) recognitionRef.current.stop(); };
   }, [language]);
 
-  useEffect(() => {
-    if (isRecording && recognitionRef.current) {
-       recognitionRef.current.stop();
-       recognitionRef.current.lang = language;
-       setTimeout(() => {
-         try { recognitionRef.current.start(); } catch (e) {}
-       }, 100);
-    }
-  }, [language]);
-
-  const toggleRecording = () => {
+  const startRecording = (initialFormat?: string) => {
     if (!recognitionRef.current) return;
-    
+    if (initialFormat) setSelectedFormat(initialFormat);
     setError(null);
-    if (isRecording) {
-      recognitionRef.current.stop();
-      setRecordingState(false);
-      setInterimText('');
-    } else {
-      setRawText('');
-      setInterimText('');
-      setRefinedText('');
-      setRecordingState(true);
-      
-      try {
-        recognitionRef.current.start();
-      } catch (err) {
-        console.error('Speech start error:', err);
-        setRecordingState(false);
-      }
-    }
+    setRawText('');
+    setInterimText('');
+    setRefinedText('');
+    setIsRecording(true);
+    isRecordingRef.current = true;
+    setViewState('listening');
+    try { recognitionRef.current.start(); } catch (err) { stopRecording(); }
   };
 
-  const copyToClipboard = async (text: string, isRaw: boolean) => {
-    try {
-      await navigator.clipboard.writeText(text);
-      if (isRaw) {
-        setCopiedRaw(true);
-        setTimeout(() => setCopiedRaw(false), 2000);
-      } else {
-        setCopiedRefined(true);
-        setTimeout(() => setCopiedRefined(false), 2000);
-      }
-    } catch (e) {
-      console.error('Failed to copy', e);
-    }
+  const stopRecording = () => {
+    setIsRecording(false);
+    isRecordingRef.current = false;
+    if (recognitionRef.current) recognitionRef.current.stop();
   };
 
-  const refineText = async () => {
-    if (!rawText.trim()) return;
+  const handleFinishListening = () => {
+    stopRecording();
+    let finalRaw = rawText;
+    if (interimText && !rawText.includes(interimText.trim())) {
+      finalRaw = rawText + (rawText ? ' ' : '') + interimText.trim();
+      setRawText(finalRaw);
+    }
+    setInterimText('');
     
-    setIsRefining(true);
-    setError(null);
+    if (!finalRaw.trim()) {
+      setViewState('launch');
+      return;
+    }
+    
+    processText(finalRaw, selectedFormat);
+  };
+
+  const processText = async (textToProcess: string, formatId: string) => {
+    setViewState('refining');
     
     try {
-      const selectedLang = LANGUAGES.find(l => l.code === language)?.label || 'the specified language';
-      const targetLang = mode === 'translate' ? (LANGUAGES.find(l => l.code === outputLanguage)?.label || selectedLang) : selectedLang;
-      const isTranslation = mode === 'translate' && language !== outputLanguage;
-      
-      let formatInstruction = "";
-      switch (format) {
-        case 'smart':
-          formatInstruction = "Analyze the transcript to determine the speaker's core intent. If the text resembles an email, letter, or message, format it appropriately. If there are lists or distinct points, structure them using bullet points (using - or •). Use ALL CAPS for section headings where it makes sense to create a formalized, highly legible structured layout. Provide a smart, finalized structure rather than a raw transcription.";
-          break;
-        case 'email':
-          formatInstruction = "Format the text as a professional email. Add placeholders for greetings/sign-offs if appropriate.";
-          break;
-        case 'whatsapp':
-          formatInstruction = "Format the text as a clear, polite, and well-spaced WhatsApp message.";
-          break;
-        case 'prompt':
-          formatInstruction = "Format and structure the text as a high-quality instructional prompt for an AI.";
-          break;
-        case 'standard':
-        default:
-          formatInstruction = "Ensure perfect grammar, spelling, and punctuation without changing the core meaning.";
-          break;
-      }
-
-      const prompt = `You are an expert text editor and translator. I am giving you a raw speech-to-text transcript spoken primarily in ${selectedLang}.
-      
-Your task:
-1. ${isTranslation ? `Translate the meaning accurately and naturally into ${targetLang}.` : `Fix any grammatical, spelling, and punctuation errors.`}
-2. ${formatInstruction}
-
-Constraints:
-- Respond ONLY with the finalized, refined text.
-- Do not add any conversational filler like "Here is the parsed text."
-- Language constraints: The final text MUST be in ${targetLang}. For translations, ensure local idioms map naturally.
-
+      const formatObj = FORMATS.find(f => f.id === formatId);
+      const prompt = `You are an expert text editor. I am giving you a raw speech-to-text transcript.
+Task: Fix grammatical errors and format the text according to this style: ${formatObj?.label} - ${formatObj?.desc}
+Respond ONLY with the finalized, refined text.
 Raw Transcript:
 """
-${rawText}
+${textToProcess}
 """`;
 
       const response = await fetch('/api/refine', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ prompt }),
       });
 
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Failed to refine text');
-      }
-
+      if (!response.ok) throw new Error('Failed to refine text');
       const data = await response.json();
       const newRefined = data.text?.trim() || '';
       setRefinedText(newRefined);
       
+      // Save history
       if (newRefined) {
         const newItem: HistoryItem = {
           id: Date.now().toString(),
-          rawText,
+          rawText: textToProcess,
           refinedText: newRefined,
-          mode,
-          language,
-          outputLanguage: mode === 'translate' ? outputLanguage : undefined,
-          format: mode === 'transcribe' ? format : undefined,
+          format: formatId,
+          pinned: false,
           timestamp: Date.now()
         };
         setHistory(prev => {
           const updated = [newItem, ...prev].slice(0, 50);
-          localStorage.setItem('fluent_scribe_history', JSON.stringify(updated));
+          localStorage.setItem('fluent_scribe_v2_history', JSON.stringify(updated));
           return updated;
         });
       }
+      setViewState('result');
     } catch (err: any) {
-      console.error('Refinement error:', err);
-      setError(err?.message || 'An error occurred while refining the text.');
-    } finally {
-      setIsRefining(false);
+      console.error(err);
+      setError(err?.message || 'Error refining text.');
+      // Keep it in result state so they can see raw text even if failed
+      setRefinedText('Error: ' + (err?.message || 'Failed to refine.'));
+      setViewState('result');
     }
   };
 
-  return (
-    <div className="h-[100dvh] mx-auto w-full max-w-md bg-[#FDFBF7] text-[#3D3D3D] font-sans relative flex flex-col sm:border-x sm:border-[#E5E2DA] sm:shadow-2xl overflow-hidden">
-      
-      {/* Header */}
-      <header className="flex-none px-5 py-3 bg-[#FDFBF7] border-b border-[#E5E2DA] flex flex-row items-center justify-between z-10 shrink-0 relative">
-        <div className="flex items-center justify-start max-w-[30%]">
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 bg-[#5A5A40] rounded-lg flex items-center justify-center shadow-sm">
-              <Sparkles className="w-4 h-4 text-white" />
-            </div>
-            <h1 className="text-xl font-semibold tracking-tight font-serif italic text-[#2D2D2D] md:block hidden">
-              Fluent
-            </h1>
-          </div>
-        </div>
-        <div className="flex justify-center shrink-0 absolute left-1/2 -translate-x-1/2">
-          <div className="flex bg-[#E8E6DF] p-1 rounded-full w-[180px]">
-            <button 
-              onClick={() => setMode('transcribe')} 
-              className={`flex-1 text-[10px] uppercase tracking-widest font-bold py-1.5 rounded-full transition-all ${mode === 'transcribe' ? 'bg-white shadow-sm text-[#5A5A40]' : 'text-[#A5A296] hover:text-[#5A5A40]'}`}
-            >
-              Scribe
-            </button>
-            <button 
-              onClick={() => setMode('translate')} 
-              className={`flex-1 text-[10px] uppercase tracking-widest font-bold py-1.5 rounded-full transition-all ${mode === 'translate' ? 'bg-white shadow-sm text-[#5A5A40]' : 'text-[#A5A296] hover:text-[#5A5A40]'}`}
-            >
-              Translate
-            </button>
-          </div>
-        </div>
-        <div className="flex items-center justify-end max-w-[30%] gap-2">
-          <button 
-            onClick={() => setIsWalkthroughOpen(true)} 
-            className="w-8 h-8 bg-white rounded-full flex items-center justify-center border border-[#E5E2DA] text-[#A5A296] hover:text-[#5A5A40] transition-colors"
-            title="How to use"
-          >
-            <HelpCircle className="w-4 h-4" />
-          </button>
-          <button 
-            onClick={() => setIsHistoryOpen(true)} 
-            className="w-8 h-8 bg-white rounded-full flex items-center justify-center border border-[#E5E2DA] text-[#A5A296] hover:text-[#5A5A40] transition-colors relative"
-          >
-            <Clock className="w-4 h-4" />
-            {history.length > 0 && (
-              <span className="absolute max-w-[20px] -top-1 -right-1 bg-[#5A5A40] text-white text-[8px] font-bold w-3 h-3 rounded-full flex items-center justify-center">
-                {history.length}
-              </span>
-            )}
-          </button>
-        </div>
+  const copyToClipboard = async (text: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (e) {}
+  };
+
+  const renderLaunchScreen = () => (
+    <motion.div 
+      initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }}
+      className="flex flex-col h-full w-full px-6 pt-12 pb-6 space-y-6"
+    >
+      <header className="flex justify-between items-center w-full">
+        <h1 className="text-3xl font-display font-semibold text-white tracking-tight">Hi, Usman <span className="text-2xl">👋</span></h1>
+        <button onClick={() => setIsHistoryOpen(true)} className="p-2 bg-[#1C1C1E] rounded-full text-gray-400 hover:text-white transition">
+          <Clock className="w-5 h-5" />
+        </button>
       </header>
 
-      {error && (
-        <div className="m-4 p-4 bg-red-50 text-red-700 border border-red-200 rounded-xl text-sm font-medium z-10 shadow-sm relative">
-          <button 
-            onClick={() => setError(null)} 
-            className="absolute top-2.5 right-2.5 text-red-500 hover:text-red-700 bg-red-100 hover:bg-red-200 rounded-full p-1"
-          >
-            <div className="w-4 h-4" />
-            <span className="absolute inset-0 flex items-center justify-center text-xs font-bold font-sans">×</span>
+      <div className="flex-1 flex flex-col gap-4 mt-4">
+        {/* Primary Card */}
+        <motion.button 
+          whileHover={{ scale: 0.98 }} whileTap={{ scale: 0.95 }}
+          onClick={() => startRecording('professional')}
+          className="relative overflow-hidden w-full h-48 rounded-[32px] bg-gradient-to-br from-[#FF5A00] to-[#E64000] p-6 flex flex-col items-start justify-end shadow-[0_8px_32px_rgba(255,90,0,0.3)] group"
+        >
+          <div className="absolute top-6 right-6 p-3 bg-white/20 rounded-full backdrop-blur-md">
+            <Mic className="w-6 h-6 text-white" />
+          </div>
+          <h2 className="text-2xl font-display font-bold text-white text-left">🎙️ Capture Thought.</h2>
+          <p className="text-white/80 mt-1 font-medium text-sm">Tap to start recording</p>
+          
+          <motion.div 
+             animate={{ opacity: [0.3, 0.6, 0.3], scale: [1, 1.2, 1] }} 
+             transition={{ duration: 4, repeat: Infinity, ease: "easeInOut" }}
+             className="absolute -top-24 -right-24 w-64 h-64 bg-white/10 blur-[50px] rounded-full pointer-events-none"
+          />
+        </motion.button>
+
+        {/* Secondary Card */}
+        <motion.button 
+          whileHover={{ scale: 0.98 }} whileTap={{ scale: 0.95 }}
+          className="w-full h-24 rounded-[28px] bg-[#1C1C1E] border border-white/5 p-5 flex items-center justify-between"
+        >
+          <div className="flex items-center gap-4">
+             <div className="w-12 h-12 bg-white/5 rounded-2xl flex items-center justify-center">
+                <Globe className="w-6 h-6 text-[#77C535]" />
+             </div>
+             <div className="text-left">
+               <h3 className="font-display font-semibold text-white">🌍 Instant Translation</h3>
+               <p className="text-xs text-gray-400 mt-0.5">{LANGUAGES.find(l=>l.code===language)?.label} → {LANGUAGES.find(l=>l.code===targetLanguage)?.label}</p>
+             </div>
+          </div>
+        </motion.button>
+
+        {/* Feature Grid */}
+        <div className="grid grid-cols-2 gap-4 mt-2">
+           {FORMATS.slice(0,4).map((f) => (
+             <motion.button
+               key={f.id}
+               whileHover={{ scale: 0.96 }} whileTap={{ scale: 0.92 }}
+               onClick={() => startRecording(f.id)}
+               className="bg-[#1C1C1E] border border-white/5 rounded-[24px] p-5 flex flex-col items-start gap-3"
+             >
+                <div className="w-10 h-10 rounded-full bg-white/5 flex items-center justify-center">
+                  <f.icon className="w-5 h-5 text-gray-300" />
+                </div>
+                <h4 className="font-display font-medium text-sm text-left text-white">{f.label.split(' ')[0]}</h4>
+             </motion.button>
+           ))}
+        </div>
+      </div>
+    </motion.div>
+  );
+
+  const renderListeningScreen = () => {
+    const particles = Array.from({ length: 48 }).map((_, i) => i);
+    
+    return (
+      <motion.div 
+        initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 1.1 }}
+        className="flex flex-col h-full w-full bg-black relative overflow-hidden"
+      >
+        <div className="flex-1 flex flex-col items-center justify-center relative">
+           {/* Particle Ring Visualizer */}
+           <div className="relative w-64 h-64 flex items-center justify-center">
+              {particles.map((i) => {
+                const angle = (i / particles.length) * Math.PI * 2;
+                const radius = 100;
+                const x = Math.cos(angle) * radius;
+                const y = Math.sin(angle) * radius;
+                
+                return (
+                  <motion.div
+                    key={i}
+                    animate={{
+                      scale: [1, Math.random() * 1.5 + 0.5, 1],
+                      opacity: [0.3, Math.random() * 0.8 + 0.2, 0.3],
+                    }}
+                    transition={{
+                      duration: Math.random() * 0.5 + 0.5,
+                      repeat: Infinity,
+                      repeatType: 'mirror'
+                    }}
+                    className="absolute w-1.5 h-1.5 bg-[#FF5A00] rounded-full shadow-[0_0_10px_#FF5A00]"
+                    style={{ left: `calc(50% + ${x}px)`, top: `calc(50% + ${y}px)` }}
+                  />
+                );
+              })}
+              <motion.div 
+                animate={{ scale: [1, 1.1, 1], opacity: [0.1, 0.2, 0.1] }}
+                transition={{ duration: 2, repeat: Infinity }}
+                className="absolute w-40 h-40 bg-[#FF5A00] rounded-full blur-[40px]"
+              />
+           </div>
+
+           {/* Live Transcript */}
+           <div className="absolute bottom-32 w-full px-8 text-center">
+             <p className="text-gray-500 font-display text-lg italic tracking-wide min-h-[60px]">
+               {interimText || rawText.slice(-50) || "Listening..."}
+             </p>
+           </div>
+        </div>
+
+        {/* Action Dock */}
+        <div className="h-32 bg-gradient-to-t from-black to-transparent flex items-center justify-center gap-12 pb-8">
+           <button className="w-12 h-12 rounded-full bg-[#1C1C1E] flex items-center justify-center text-gray-400 hover:text-white transition">
+             <Keyboard className="w-5 h-5" />
+           </button>
+           
+           <motion.button 
+             whileTap={{ scale: 0.9 }}
+             onClick={handleFinishListening}
+             className="w-20 h-20 rounded-full bg-[#FF5A00] flex items-center justify-center shadow-[0_0_30px_rgba(255,90,0,0.5)]"
+           >
+             <div className="w-6 h-6 bg-white rounded-sm" />
+           </motion.button>
+           
+           <button 
+             onClick={() => { stopRecording(); setViewState('launch'); }}
+             className="w-12 h-12 rounded-full bg-[#1C1C1E] flex items-center justify-center text-gray-400 hover:text-white transition"
+           >
+             <X className="w-5 h-5" />
+           </button>
+        </div>
+      </motion.div>
+    );
+  };
+
+  const renderRefiningScreen = () => (
+    <motion.div 
+      initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+      className="flex flex-col items-center justify-center h-full w-full bg-black relative overflow-hidden"
+    >
+      <motion.div
+        animate={{ rotate: 360 }}
+        transition={{ duration: 3, repeat: Infinity, ease: "linear" }}
+        className="w-24 h-24 border-t-2 border-r-2 border-[#FF5A00] rounded-full z-10"
+      />
+      <motion.div 
+        initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }}
+        className="absolute mt-40 z-10"
+      >
+        <p className="text-[#FF5A00] font-display font-medium tracking-widest uppercase text-sm animate-pulse">
+          Polishing your thoughts...
+        </p>
+      </motion.div>
+      
+      <div className="absolute inset-0 pointer-events-none flex flex-wrap content-start gap-2 p-8 opacity-20 blur-[1px]">
+         {(rawText || interimText || "Processing").split(' ').map((word, i) => (
+           <motion.span 
+             key={i}
+             initial={{ y: 0, opacity: 1 }}
+             animate={{ y: -50 - Math.random() * 100, opacity: 0, x: (Math.random() - 0.5) * 50 }}
+             transition={{ duration: 1.5, repeat: Infinity, delay: Math.random() * 2 }}
+             className="text-white text-xl font-sans inline-block"
+           >
+             {word}
+           </motion.span>
+         ))}
+      </div>
+    </motion.div>
+  );
+
+  const renderResultScreen = () => (
+    <motion.div 
+      initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }}
+      className="flex flex-col h-full w-full bg-[#0A0A0A]"
+    >
+       <header className="flex-none px-6 py-4 flex items-center justify-between border-b border-white/5">
+          <button onClick={() => setViewState('launch')} className="text-gray-400 hover:text-white flex items-center gap-1 text-sm font-medium">
+             <X className="w-5 h-5" /> Close
           </button>
-          {error}
+          <div className="bg-[#1C1C1E] px-3 py-1.5 rounded-full flex items-center gap-2">
+             <Sparkles className="w-4 h-4 text-[#FF5A00]" />
+             <span className="text-xs font-display font-medium text-white">Result</span>
+          </div>
+          <div className="w-16" />
+       </header>
+
+       <div className="flex-1 overflow-y-auto px-6 py-6 space-y-6 scrollbar-hide">
+          <div className="w-full flex justify-end">
+             <div className="bg-[#1C1C1E] p-4 rounded-2xl rounded-tr-sm max-w-[85%] border border-white/5">
+                <p className="text-gray-400 text-sm font-sans leading-relaxed">
+                   {rawText}
+                </p>
+             </div>
+          </div>
+
+          <div className="w-full flex justify-start">
+             <motion.div 
+                key={refinedText}
+                initial={{ opacity: 0, scale: 0.95, filter: "blur(4px)" }} 
+                animate={{ opacity: 1, scale: 1, filter: "blur(0px)" }}
+                className="bg-white p-5 rounded-3xl rounded-tl-sm max-w-[95%] shadow-[0_10px_40px_rgba(255,255,255,0.05)] cursor-pointer relative group"
+                onClick={() => copyToClipboard(refinedText)}
+             >
+                <p className="text-black text-[17px] font-medium leading-relaxed font-sans">
+                   {refinedText}
+                </p>
+                <div className="absolute -bottom-3 -right-3">
+                   <AnimatePresence>
+                     {copied && (
+                       <motion.div 
+                         initial={{ scale: 0, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0, opacity: 0 }}
+                         className="bg-[#77C535] text-white p-2 rounded-full shadow-lg flex items-center justify-center"
+                       >
+                         <Check className="w-4 h-4" />
+                       </motion.div>
+                     )}
+                   </AnimatePresence>
+                </div>
+             </motion.div>
+          </div>
+       </div>
+
+       <div className="flex-none bg-[#141415] border-t border-white/5 pb-safe">
+          <div className="px-6 py-4 flex gap-3 overflow-x-auto scrollbar-hide snap-x">
+             {FORMATS.map(f => (
+                <button
+                   key={f.id}
+                   onClick={() => {
+                     setSelectedFormat(f.id);
+                     processText(rawText, f.id);
+                   }}
+                   className={`snap-start shrink-0 flex flex-col items-center gap-2 p-3 rounded-2xl w-24 transition-all ${selectedFormat === f.id ? 'bg-[#2C2C2E]' : 'hover:bg-[#1C1C1E]'}`}
+                >
+                   <div className={`w-10 h-10 rounded-full flex items-center justify-center ${selectedFormat === f.id ? 'bg-[#FF5A00] text-white' : 'bg-[#2C2C2E] text-gray-400'}`}>
+                     <f.icon className="w-5 h-5" />
+                   </div>
+                   <span className={`text-[10px] font-display font-medium text-center leading-tight ${selectedFormat === f.id ? 'text-white' : 'text-gray-500'}`}>
+                     {f.label}
+                   </span>
+                </button>
+             ))}
+          </div>
+       </div>
+    </motion.div>
+  );
+
+  const renderHistoryModal = () => (
+    <AnimatePresence>
+      {isHistoryOpen && (
+        <motion.div 
+           initial={{ y: '100%' }} animate={{ y: 0 }} exit={{ y: '100%' }}
+           transition={{ type: 'spring', damping: 25, stiffness: 200 }}
+           className="absolute inset-0 z-50 bg-[#0A0A0A] flex flex-col"
+        >
+           <header className="flex-none px-6 py-5 border-b border-white/5 flex items-center justify-between bg-[#141415]">
+              <h2 className="text-xl font-display font-semibold text-white">Archive</h2>
+              <button onClick={() => setIsHistoryOpen(false)} className="w-8 h-8 rounded-full bg-[#2C2C2E] flex items-center justify-center text-white">
+                <X className="w-4 h-4" />
+              </button>
+           </header>
+           
+           <div className="flex-1 overflow-y-auto p-4 space-y-3 pb-safe scrollbar-hide">
+              {history.length === 0 ? (
+                 <div className="h-full flex flex-col items-center justify-center opacity-50">
+                    <Clock className="w-12 h-12 mb-4 text-gray-600" />
+                    <p className="font-display font-medium text-gray-400">No history yet</p>
+                 </div>
+              ) : (
+                 history.map(item => {
+                   const formatObj = FORMATS.find(f => f.id === item.format) || FORMATS[0];
+                   const Icon = formatObj.icon;
+                   return (
+                     <motion.div 
+                        key={item.id}
+                        layout
+                        initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
+                        className="w-full bg-[#1C1C1E] rounded-3xl p-5 border border-white/5"
+                     >
+                        <div className="flex justify-between items-start mb-3">
+                           <div className="flex items-center gap-2 text-[#FF5A00] bg-[#FF5A00]/10 px-3 py-1 rounded-full">
+                              <Icon className="w-3.5 h-3.5" />
+                              <span className="text-[10px] font-bold uppercase tracking-wider">{formatObj.label}</span>
+                           </div>
+                           <div className="flex gap-2">
+                              <button className="text-gray-500 hover:text-white p-1"><Pin className="w-4 h-4" /></button>
+                              <button 
+                                onClick={() => {
+                                  const updated = history.filter(h => h.id !== item.id);
+                                  setHistory(updated);
+                                  localStorage.setItem('fluent_scribe_v2_history', JSON.stringify(updated));
+                                }}
+                                className="text-gray-500 hover:text-red-500 p-1"
+                              ><Trash2 className="w-4 h-4" /></button>
+                           </div>
+                        </div>
+                        <p className="text-[15px] font-medium text-white line-clamp-3 mb-2 font-sans">{item.refinedText}</p>
+                        <p className="text-xs text-gray-500 line-clamp-1 italic">"{item.rawText}"</p>
+                     </motion.div>
+                   )
+                 })
+              )}
+           </div>
+        </motion.div>
+      )}
+    </AnimatePresence>
+  );
+
+  return (
+    <div className="h-[100dvh] mx-auto w-full max-w-md bg-[#0A0A0A] text-white font-sans relative flex flex-col sm:border-x sm:border-white/10 sm:shadow-2xl overflow-hidden">
+      
+      {error && (
+        <div className="absolute top-4 left-4 right-4 bg-red-900/90 text-white p-4 rounded-2xl z-50 backdrop-blur-md shadow-2xl border border-red-500/50 flex items-center justify-between">
+          <span className="text-sm font-medium">{error}</span>
+          <button onClick={() => setError(null)}><X className="w-5 h-5 text-white/70 hover:text-white" /></button>
         </div>
       )}
 
-      {/* Main scrollable area */}
-      <main className="flex-1 overflow-y-auto p-4 flex flex-col gap-5 relative">
-        
-        {/* Input Card */}
-        <div className="flex flex-col bg-white rounded-3xl shadow-sm border border-[#E5E2DA] overflow-hidden min-h-[220px] shrink-0">
-          <div className="px-5 py-3 border-b border-[#F5F5F0] flex items-center justify-between bg-white">
-            <span className="text-[10px] uppercase tracking-widest font-bold text-[#A5A296] flex items-center gap-2">
-               <Mic className="w-3 h-3"/> Input
-            </span>
-            <div className="flex gap-3">
-              {isRecording && <span className="text-[9px] bg-[#F27D26]/10 text-[#F27D26] px-2 py-0.5 rounded-md font-bold animate-pulse">RECORDING</span>}
-              <button onClick={() => copyToClipboard(rawText, true)} disabled={!rawText} className="text-[#A5A296] hover:text-[#5A5A40] disabled:opacity-30">
-                 {copiedRaw ? <Check className="w-4 h-4 text-[#25D366]" /> : <Copy className="w-4 h-4" />}
-              </button>
-            </div>
-          </div>
-          <div className="relative flex-1 w-full flex flex-col">
-            <textarea
-              value={rawText}
-              onChange={(e) => setRawText(e.target.value)}
-              placeholder="Tap the mic to speak, or type here..."
-              className="flex-1 w-full px-5 py-4 resize-none focus:outline-none text-[#7D7D7D] font-serif italic leading-relaxed text-[17px] placeholder:text-[#E5E2DA] bg-transparent pb-10"
-            />
-            {interimText && (
-               <div className="absolute left-5 bottom-4 text-[#A5A296] bg-[#FDFBF7] px-2 py-1 rounded text-sm animate-pulse border border-[#E5E2DA] max-w-[90%] truncate">
-                 {interimText}
-               </div>
-            )}
-          </div>
-        </div>
-
-        {/* Output Card */}
-        <div className="flex flex-col bg-white rounded-3xl shadow-md border border-[#E5E2DA] overflow-hidden min-h-[250px] shrink-0 relative">
-          <div className="px-5 py-3 border-b border-[#F5F5F0] flex items-center justify-between bg-[#FDFBF7]/30">
-            <span className="text-[10px] uppercase tracking-widest font-bold text-[#5A5A40] flex items-center gap-2">
-              <Sparkles className="w-3 h-3"/> Output
-            </span>
-            {mode === 'transcribe' ? (
-              <div className="relative inline-block">
-                <select 
-                  value={format}
-                  onChange={(e) => setFormat(e.target.value)}
-                  className="appearance-none text-[9px] pl-2 pr-6 py-1 bg-white border border-[#E5E2DA] rounded text-[#5A5A40] font-bold uppercase shadow-sm outline-none focus:border-[#A5A296] w-full"
-                >
-                  {FORMATS.map(f => (
-                    <option key={f.id} value={f.id}>{f.label}</option>
-                  ))}
-                </select>
-                <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-1.5 text-[#5A5A40]">
-                  <svg className="w-3 h-3 fill-current" viewBox="0 0 20 20">
-                    <path d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clipRule="evenodd" fillRule="evenodd" />
-                  </svg>
-                </div>
-              </div>
-            ) : (
-              <span className="text-[9px] px-2 py-0.5 bg-white border border-[#E5E2DA] rounded text-[#5A5A40] font-bold uppercase shadow-sm">
-                Translation
-              </span>
-            )}
-          </div>
-          <div className="flex-1 flex flex-col relative bg-white">
-            <textarea
-              value={refinedText}
-              readOnly
-              placeholder="Refined translation will appear here..."
-              className="flex-1 w-full px-5 py-4 pb-14 resize-none focus:outline-none text-[#2D2D2D] font-serif leading-relaxed text-lg bg-transparent placeholder:text-[#E5E2DA]"
-            />
-            {/* Action Bar on Output */}
-            <div className="absolute bottom-4 right-4 z-10 flex items-center gap-4">
-               <button 
-                 onClick={() => setRefinedText('')} 
-                 className={`text-[10px] font-bold text-[#A5A296] hover:text-[#D97757] uppercase tracking-widest transition-colors ${!refinedText ? 'opacity-0 pointer-events-none' : ''}`}
-               >
-                 Clear
-               </button>
-               <button 
-                 onClick={() => copyToClipboard(refinedText, false)} 
-                 disabled={!refinedText} 
-                 className="flex items-center gap-2 bg-[#5A5A40] text-white hover:bg-[#4A4A35] px-5 py-2 rounded-full text-xs font-bold tracking-wider uppercase transition-all shadow-sm disabled:opacity-50 disabled:hidden"
-               >
-                 {copiedRefined ? <Check className="w-4 h-4 text-[#25D366]" /> : <Copy className="w-4 h-4" />}
-                 Copy
-               </button>
-            </div>
-          </div>
-          
-          <AnimatePresence>
-            {isRefining && (
-               <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 bg-[#FDFBF7]/80 backdrop-blur-[2px] flex items-center justify-center z-20">
-                  <div className="flex flex-col items-center gap-4">
-                    <div className="p-4 bg-white rounded-full shadow-lg border border-[#E5E2DA]">
-                       <RefreshCw className="w-6 h-6 text-[#5A5A40] animate-spin" />
-                    </div>
-                    <span className="text-xs font-bold text-[#A5A296] uppercase tracking-widest bg-white/50 px-3 py-1 rounded-full">Processing...</span>
-                  </div>
-               </motion.div>
-            )}
-          </AnimatePresence>
-        </div>
-      </main>
-
-      {/* Bottom Segment */}
-      <div className="flex-none bg-[#FDFBF7] border-t border-[#E5E2DA] pb-safe shadow-[0_-10px_40px_rgba(0,0,0,0.03)] z-30 flex flex-col">
-         {/* Language Selectors Floating-like Bar */}
-         <div className="px-5 pt-3 pb-2">
-           <div className={`flex items-center gap-2 bg-white p-1.5 rounded-2xl border border-[#E5E2DA] shadow-sm ${mode === 'transcribe' ? 'justify-center max-w-[200px] mx-auto' : 'justify-between'}`}>
-             <div className="relative flex-1">
-               <select
-                 value={language}
-                 onChange={(e) => setLanguage(e.target.value)}
-                 className="appearance-none w-full text-xs font-bold text-[#5A5A40] bg-transparent pl-4 pr-8 py-2 outline-none text-center rounded-xl focus:bg-[#F5F5F0] transition-colors"
-               >
-                 {LANGUAGES.map(lang => (
-                   <option key={lang.code} value={lang.code}>{lang.label.split(' ')[0]}</option>
-                 ))}
-               </select>
-               <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-3 text-[#A5A296]">
-                  <svg className="w-3 h-3 fill-current" viewBox="0 0 20 20"><path d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clipRule="evenodd" fillRule="evenodd" /></svg>
-               </div>
-             </div>
-             
-             {mode === 'translate' && (
-               <>
-                 <button 
-                   onClick={() => {
-                     const temp = language;
-                     setLanguage(outputLanguage);
-                     setOutputLanguage(temp);
-                   }}
-                   className="w-8 h-8 rounded-full bg-[#FDFBF7] hover:bg-[#F5F5F0] flex items-center justify-center shrink-0 border border-[#E5E2DA] transition-colors text-[#A5A296] hover:text-[#5A5A40]"
-                 >
-                   <ArrowRightLeft className="w-3.5 h-3.5" />
-                 </button>
-
-                 <div className="relative flex-1">
-                   <select
-                     value={outputLanguage}
-                     onChange={(e) => setOutputLanguage(e.target.value)}
-                     className="appearance-none w-full text-xs font-bold text-[#5A5A40] bg-transparent pl-4 pr-8 py-2 outline-none text-center rounded-xl focus:bg-[#F5F5F0] transition-colors"
-                   >
-                     {LANGUAGES.map(lang => (
-                       <option key={lang.code} value={lang.code}>{lang.label.split(' ')[0]}</option>
-                     ))}
-                   </select>
-                    <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-3 text-[#A5A296]">
-                      <svg className="w-3 h-3 fill-current" viewBox="0 0 20 20"><path d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clipRule="evenodd" fillRule="evenodd" /></svg>
-                   </div>
-                 </div>
-               </>
-             )}
-           </div>
-         </div>
-
-         <div className="flex items-center justify-between px-6 pb-6 pt-2 relative">
-            {/* Left Action / Info */}
-            <div className="flex justify-start w-1/3">
-               <button 
-                 onClick={() => { setRawText(''); setInterimText(''); }} 
-                 className={`text-[10px] font-bold text-[#A5A296] hover:text-[#D97757] uppercase tracking-widest transition-colors flex items-center gap-1 ${(!rawText && !interimText) ? 'opacity-0 pointer-events-none' : ''}`}
-               >
-                 Clear
-               </button>
-            </div>
-
-            {/* Center FAB */}
-            <div className="flex items-center justify-center relative z-10 w-1/3">
-               <button
-                  onClick={toggleRecording}
-                  disabled={!SpeechRecognitionAPI}
-                  className={`relative flex items-center justify-center w-16 h-16 rounded-full transition-transform outline-none ${
-                    isRecording 
-                      ? 'bg-[#D97757] text-white shadow-[0_8px_30px_rgba(217,119,87,0.4)] border-4 border-[#FDFBF7] scale-110' 
-                      : 'bg-white text-[#5A5A40] border-4 border-[#FDFBF7] shadow-sm hover:scale-105'
-                  } ${!SpeechRecognitionAPI ? 'opacity-50 cursor-not-allowed' : ''}`}
-                >
-                  {isRecording && (
-                     <motion.div animate={{ scale: [1, 1.3, 1] }} transition={{ repeat: Infinity, duration: 1.5 }} className="absolute inset-0 bg-[#D97757] rounded-full opacity-30" />
-                  )}
-                  {isRecording ? <Mic className="w-7 h-7" /> : <MicOff className="w-7 h-7" />}
-                </button>
-            </div>
-
-            {/* Right Action */}
-            <div className="flex justify-end w-1/3">
-               <button
-                 onClick={refineText}
-                 disabled={!rawText.trim() || isRefining || isRecording}
-                 className="flex items-center justify-center gap-2 bg-[#5A5A40] hover:bg-[#4A4A35] disabled:bg-[#F5F5F0] disabled:text-[#A5A296] text-white px-4 py-3 rounded-2xl shadow-sm font-medium text-sm transition-colors"
-               >
-                 {isRefining ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
-               </button>
-            </div>
-         </div>
-      </div>
-
-      {/* History Full-Screen Modal */}
-      <AnimatePresence>
-        {isHistoryOpen && (
-          <motion.div 
-             initial={{ y: '100%' }}
-             animate={{ y: 0 }}
-             exit={{ y: '100%' }}
-             transition={{ type: 'spring', damping: 25, stiffness: 200 }}
-             className="absolute inset-0 z-50 bg-[#FDFBF7] flex flex-col"
-          >
-             <header className="flex-none px-5 py-4 border-b border-[#E5E2DA] flex items-center justify-between bg-white shadow-sm z-10">
-                <h2 className="text-xl font-semibold font-serif italic text-[#2D2D2D]">History</h2>
-                <div className="flex items-center gap-3">
-                  <button 
-                    onClick={() => {
-                       if (window.confirm('Clear all history?')) {
-                          setHistory([]);
-                          localStorage.removeItem('fluent_scribe_history');
-                       }
-                    }} 
-                    className="text-[10px] text-red-500 font-bold uppercase tracking-widest px-2 hover:opacity-70 transition-opacity"
-                  >
-                    Clear All
-                  </button>
-                  <button onClick={() => setIsHistoryOpen(false)} className="px-5 py-2 bg-[#5A5A40] text-white text-[10px] font-bold uppercase rounded-full tracking-widest shadow-sm">
-                    Done
-                  </button>
-                </div>
-             </header>
-             <div className="flex-1 overflow-y-auto p-4 space-y-3 pb-safe">
-                {history.length === 0 ? (
-                   <div className="text-center py-12 flex flex-col items-center justify-center opacity-50">
-                      <Clock className="w-10 h-10 mb-3 text-[#5A5A40]" />
-                      <p className="text-sm font-semibold text-[#5A5A40]">No history yet.</p>
-                      <p className="text-[11px] text-[#A5A296] mt-2 max-w-[200px]">Your refined transcriptions and translations will appear here.</p>
-                   </div>
-                ) : (
-                   history.map(item => (
-                      <div 
-                         key={item.id} 
-                         role="button"
-                         tabIndex={0}
-                         onKeyDown={(e) => {
-                            if (e.key === 'Enter' || e.key === ' ') {
-                               e.preventDefault();
-                               setRawText(item.rawText);
-                               setRefinedText(item.refinedText);
-                               setMode(item.mode);
-                               setLanguage(item.language);
-                               if (item.outputLanguage) setOutputLanguage(item.outputLanguage);
-                               if (item.format) setFormat(item.format);
-                               setIsHistoryOpen(false);
-                            }
-                         }}
-                         onClick={() => {
-                            setRawText(item.rawText);
-                            setRefinedText(item.refinedText);
-                            setMode(item.mode);
-                            setLanguage(item.language);
-                            if (item.outputLanguage) setOutputLanguage(item.outputLanguage);
-                            if (item.format) setFormat(item.format);
-                            setIsHistoryOpen(false);
-                         }}
-                         className="w-full text-left p-4 bg-white border border-[#E5E2DA] rounded-2xl hover:border-[#A5A296] hover:shadow-sm transition-all focus:outline-none focus:ring-2 focus:ring-[#5A5A40]/30 cursor-pointer block"
-                      >
-                         <div className="flex justify-between items-start mb-2">
-                            <span className="text-[10px] font-bold uppercase tracking-widest text-[#5A5A40] px-2 py-0.5 bg-[#FDFBF7] border border-[#E5E2DA] rounded">
-                               {item.mode === 'translate' ? `Translate: ${LANGUAGES.find(l=>l.code===item.outputLanguage)?.label.split(' ')[0] || item.outputLanguage}` : `Scribe: ${FORMATS.find(f=>f.id===item.format)?.label || 'Standard'}`}
-                            </span>
-                            <div className="flex items-center gap-3">
-                               <span className="text-[10px] text-[#A5A296] font-bold tracking-widest">
-                                  {new Date(item.timestamp).toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
-                               </span>
-                               <button 
-                                  onClick={(e) => {
-                                     e.stopPropagation();
-                                     const updated = history.filter(h => h.id !== item.id);
-                                     setHistory(updated);
-                                     localStorage.setItem('fluent_scribe_history', JSON.stringify(updated));
-                                  }}
-                                  className="text-red-400 hover:text-red-600 transition-colors p-1 rounded-full hover:bg-red-50"
-                               >
-                                  <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"></path><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"></path><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"></path></svg>
-                               </button>
-                            </div>
-                         </div>
-                         <p className="text-xs text-[#A5A296] font-serif italic truncate mb-2">"{item.rawText}"</p>
-                         <p className="text-[15px] font-semibold text-[#2D2D2D] line-clamp-3">{item.refinedText}</p>
-                      </div>
-                   ))
-                )}
-             </div>
-          </motion.div>
-        )}
+      <AnimatePresence mode="wait">
+        {viewState === 'launch' && <motion.div key="launch" className="absolute inset-0">{renderLaunchScreen()}</motion.div>}
+        {viewState === 'listening' && <motion.div key="listening" className="absolute inset-0">{renderListeningScreen()}</motion.div>}
+        {viewState === 'refining' && <motion.div key="refining" className="absolute inset-0">{renderRefiningScreen()}</motion.div>}
+        {viewState === 'result' && <motion.div key="result" className="absolute inset-0">{renderResultScreen()}</motion.div>}
       </AnimatePresence>
 
-      <IOSInstallPrompt />
-      <AppWalkthrough isOpen={isWalkthroughOpen} onClose={() => setIsWalkthroughOpen(false)} />
+      {renderHistoryModal()}
+
     </div>
   );
 }
